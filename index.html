@@ -1,0 +1,169 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<meta name="color-scheme" content="dark">
+<title>聚酯链驾驶舱 · Polyester Desk</title>
+<meta name="description" content="个人用能化产业链驾驶舱：原油到瓶片/短纤的主力 K 线、加工费与价差、现货期货数据血统，全球股债汇商品宏观面板，以及产业链/宏观/服装/国债/美联储情报流。">
+<meta name="robots" content="noindex, nofollow">
+<meta property="og:title" content="聚酯链驾驶舱">
+<meta property="og:description" content="原油到瓶片/短纤：K线、加工费、数据血统、全球宏观与情报流">
+<meta property="og:type" content="website">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e1116'/%3E%3Crect x='10' y='8' width='4' height='12' fill='%23f0554e'/%3E%3Crect x='18' y='12' width='4' height='12' fill='%2327c08a'/%3E%3Crect x='4' y='22' width='24' height='2' rx='1' fill='%230091d4'/%3E%3C/svg%3E">
+<link rel="preconnect" href="https://stock2.finance.sina.com.cn" crossorigin>
+<link rel="preconnect" href="https://qt.gtimg.cn" crossorigin>
+<link rel="preconnect" href="https://quote.cnbc.com" crossorigin>
+<link rel="stylesheet" href="assets/app.css">
+</head>
+<body>
+
+<p class="sr-only" id="live" role="status" aria-live="polite"></p>
+
+<!-- ======================= 顶栏 ======================= -->
+<header class="topbar">
+  <div class="brand">
+    <span class="mark"></span>
+    <b>聚酯链驾驶舱</b>
+    <span id="brandSub">自用</span>
+  </div>
+  <div class="marquee" id="marquee" role="group" aria-label="全球宏观与上游报价">
+    <span class="mq"><span class="k">加载中</span></span>
+  </div>
+  <div class="topmeta">
+    <span id="clock" class="num">--:--:--</span>
+    <button class="btn" id="btnRefresh" type="button" title="重新拉取全部行情与新闻">刷新</button>
+  </div>
+</header>
+
+<main class="grid">
+
+  <!-- ======================= 左栏 ======================= -->
+  <div class="col-main">
+
+    <!-- K 线 -->
+    <section class="card" aria-labelledby="h-kline">
+      <div class="card-h">
+        <h2 id="h-kline">主力合约</h2>
+        <span class="note" id="klineBroker">—</span>
+        <div id="klinePrice">
+          <span class="px num" id="klineLast">—</span>
+          <span class="chg num" id="klineChg"></span>
+        </div>
+      </div>
+
+      <div class="card-h">
+        <div class="tabs" id="symTabs" role="group" aria-label="品种切换"></div>
+        <div class="tabs spacer" id="perTabs" role="group" aria-label="周期切换"></div>
+      </div>
+
+      <div class="kline-wrap">
+        <div id="klineOhlc" aria-hidden="true"></div>
+        <div id="kline" role="img" aria-label="主力合约 K 线图"></div>
+      </div>
+
+      <div class="legend">
+        <span><i style="background:#0091d4"></i>MA5</span>
+        <span><i style="background:#9d9d9d"></i>MA20</span>
+        <span>涨 <span class="up">红</span> · 跌 <span class="down">绿</span></span>
+        <span class="spacer" id="klineRange"></span>
+      </div>
+
+      <p class="state" id="klineState">正在准备图表…</p>
+    </section>
+
+    <!-- 产业链传导链 -->
+    <section class="card" aria-labelledby="h-chain">
+      <div class="card-h">
+        <h2 id="h-chain">产业链传导链</h2>
+        <span class="note">节点按当日涨跌染色 · 点击联动上方 K 线</span>
+      </div>
+      <div class="chain" id="chain" role="group" aria-label="产业链节点"></div>
+    </section>
+
+    <!-- 加工费 / 价差 -->
+    <section class="card" aria-labelledby="h-spread">
+      <div class="card-h">
+        <h2 id="h-spread">加工费 / 价差</h2>
+        <span class="note" id="spreadAsOf">—</span>
+      </div>
+      <div class="spreads" id="spreads"></div>
+      <p class="state" id="spreadFormula">—</p>
+    </section>
+
+    <!-- 全球市场 -->
+    <section class="card" aria-labelledby="h-world">
+      <div class="card-h">
+        <h2 id="h-world">全球市场</h2>
+        <span class="note" id="worldNote">正在取数…</span>
+      </div>
+      <div id="world"></div>
+    </section>
+
+  </div>
+
+  <!-- ======================= 右栏 ======================= -->
+  <aside class="col-side">
+
+    <!-- 情报流 -->
+    <section class="card news-card" aria-labelledby="h-news">
+      <div class="card-h">
+        <h2 id="h-news">情报流</h2>
+        <span class="note" id="newsAuto">自动滚动</span>
+      </div>
+      <div class="tabs" id="chanTabs" role="group" aria-label="新闻频道"></div>
+      <div id="newsList" tabindex="0" aria-label="情报列表"></div>
+      <div class="news-foot">
+        <span id="newsMeta">—</span>
+        <button class="btn spacer" id="btnMore" type="button">更早</button>
+      </div>
+    </section>
+
+    <!-- 日历 -->
+    <section class="card" aria-labelledby="h-cal">
+      <div class="card-h">
+        <h2 id="h-cal">日历倒计时</h2>
+        <span class="note">本机时区</span>
+      </div>
+      <div id="calTop"></div>
+      <div class="bar" id="calBar"><i style="width:0"></i></div>
+      <div id="calRest"></div>
+      <p class="state" id="calNote">—</p>
+      <div id="calWarn"></div>
+    </section>
+
+  </aside>
+</main>
+
+<!-- ======================= 底部 ======================= -->
+<footer class="bottombar">
+  <div class="heat" id="heat" role="group" aria-label="全品种涨跌热力"></div>
+  <div class="prov" id="prov"></div>
+  <div class="prov" id="fresh"></div>
+  <p class="summary" id="summary">正在读取本地数据库…</p>
+  <div class="ai" id="ai" hidden></div>
+</footer>
+
+<!-- ======================= 终端模式 ======================= -->
+<div class="term" id="terminal" hidden>
+  <div class="term-box" role="dialog" aria-modal="true" aria-label="终端模式">
+    <div class="term-in">
+      <span class="pr">›</span>
+      <input id="termInput" type="text" autocomplete="off" spellcheck="false"
+             placeholder="输入 TA / PX / fed / news / macro / help，回车执行，Esc 关闭"
+             aria-label="终端输入">
+    </div>
+    <div class="term-out" id="termOut" aria-live="polite"></div>
+  </div>
+</div>
+
+<!-- 图表库放本地：不依赖 CDN，国内网络下也不会因为 jsdelivr 不稳而白屏。
+     TradingView Lightweight Charts v4.1.3 · Apache-2.0 -->
+<script src="assets/vendor/lightweight-charts.standalone.production.js"></script>
+<script src="assets/config.js"></script>
+<script src="assets/data.js"></script>
+<script src="assets/charts.js"></script>
+<script src="assets/news.js"></script>
+<script src="assets/app.js"></script>
+</body>
+</html>

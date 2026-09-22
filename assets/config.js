@@ -1,0 +1,331 @@
+/* ==========================================================================
+   config.js — 品种、新闻频道、全球市场面板、日历规则
+   所有硬编码的外部地址、代码映射、字段位都在这个文件里。改数据源只改这里。
+   ========================================================================== */
+'use strict';
+
+/* --------------------------------------------------------------------------
+   1. K 线品种（CN 期货，走新浪 JSONP）
+   -------------------------------------------------------------------------- */
+const KLINE_ORDER = ['SC', 'PX', 'PTA', 'MEG', 'PF', 'PR'];
+
+const PERIODS = [
+  { id: 'D',  label: '日线', type: 101 },
+  { id: '60', label: '60分', type: 60 },
+  { id: 'W',  label: '周线', type: 'weekly' }   // 由日线本地聚合，少打一次请求
+];
+
+/* --------------------------------------------------------------------------
+   2. 全球市场面板
+   每个瓦片声明一个 src，data.js 里按 src 分发。全部实测过浏览器可直连：
+
+     cnbc    一次请求拿全部：美债 2Y/10Y/30Y、美元指数、美国三大指数、VIX、金/铜/油
+     tx      腾讯 qt.gtimg.cn，A股与港股指数 + VIX（CORS *）
+     txk     腾讯 web.ifzq.gtimg.cn 日线，用来画迷你趋势（60 天只要 6 KB）
+     desk    你自己的 desk.json（现货/期货日终，口径与你数据库一致）
+     deskFx  你自己的 FX_rate_Source.xlsx
+
+   注：布伦特/WTI 故意用 desk 而不是 CNBC —— CNBC 的布伦特报 100.22，
+   你自己的库是 96.24，跟新浪 OIL 的 96.24 一致。同一屏里口径必须统一。
+   -------------------------------------------------------------------------- */
+const WORLD_GROUPS = [
+  {
+    id: 'a', label: 'A 股', note: '腾讯 · 含 60 日趋势',
+    items: [
+      { id: 'sh000001', label: '上证指数', src: 'tx', kline: 'sh000001', digits: 2 },
+      { id: 'sh000300', label: '沪深300',  src: 'tx', kline: 'sh000300', digits: 2 },
+      { id: 'sh000905', label: '中证500',  src: 'tx', kline: 'sh000905', digits: 2 },
+      { id: 'sz399006', label: '创业板指', src: 'tx', kline: 'sz399006', digits: 2 }
+    ]
+  },
+  {
+    id: 'hk', label: '港股', note: '腾讯 · 含 60 日趋势',
+    items: [
+      { id: 'hkHSI',     label: '恒生指数', src: 'tx', kline: 'hkHSI',     digits: 2 },
+      { id: 'hkHSTECH',  label: '恒生科技', src: 'tx', kline: 'hkHSTECH',  digits: 2 },
+      { id: 'hkHSCEI',   label: '国企指数', src: 'tx', kline: 'hkHSCEI',   digits: 2 }
+    ]
+  },
+  {
+    id: 'us', label: '美股与情绪', note: 'CNBC · 仅当日快照，无历史趋势',
+    items: [
+      { id: '.SPX',  label: '标普500',  src: 'cnbc', digits: 2 },
+      { id: '.IXIC', label: '纳斯达克', src: 'cnbc', digits: 2 },
+      { id: '.DJI',  label: '道琼斯',   src: 'cnbc', digits: 2 },
+      { id: '.VIX',  label: 'VIX 恐慌', src: 'cnbc', digits: 2 }
+    ]
+  },
+  {
+    id: 'rates', label: '利率与美元', note: 'CNBC + 你的汇率库',
+    items: [
+      { id: 'US10Y', label: '美债10年', src: 'cnbc', digits: 3, suffix: '%' },
+      { id: 'US2Y',  label: '美债2年',  src: 'cnbc', digits: 3, suffix: '%' },
+      { id: 'US30Y', label: '美债30年', src: 'cnbc', digits: 3, suffix: '%' },
+      { id: '2s10s', label: '2s10s 利差', src: 'spread', from: ['US10Y', 'US2Y'],
+        digits: 3, suffix: 'pp', note: '10Y − 2Y，负值即倒挂' },
+      { id: '.DXY',  label: '美元指数', src: 'cnbc', digits: 3 },
+      { id: 'USDCNY', label: 'USDCNY', src: 'deskFx', digits: 4 },
+      { id: 'USDJPY', label: 'USDJPY', src: 'deskFx', digits: 2 },
+      { id: 'USDKRW', label: 'USDKRW', src: 'deskFx', digits: 2 }
+    ]
+  },
+  {
+    id: 'comm', label: '商品与产业链上游', note: '你的数据库优先，口径与加工费一致',
+    items: [
+      { id: 'SC',      label: 'SC原油',  src: 'desk', desk: ['SC', 'futures'],      digits: 1, unit: '¥' },
+      { id: 'BRENT',   label: '布伦特',  src: 'desk', desk: ['BRENT', 'spot'],      digits: 2, unit: '$' },
+      { id: 'WTI',     label: 'WTI',    src: 'desk', desk: ['WTI', 'spot'],        digits: 2, unit: '$' },
+      { id: 'NAPHTHA', label: '石脑油',  src: 'desk', desk: ['NAPHTHA', 'spot'],   digits: 0, unit: '¥' },
+      { id: '@GC.1',   label: 'COMEX黄金', src: 'cnbc', digits: 1, unit: '$' },
+      { id: '@HG.1',   label: 'COMEX铜',  src: 'cnbc', digits: 3, unit: '$' },
+      { id: '@SI.1',   label: 'COMEX银',  src: 'cnbc', digits: 3, unit: '$' },
+      { id: '@BZ.1',   label: '布伦特(CNBC)', src: 'cnbc', digits: 2, unit: '$',
+        note: '与你的库口径不同，留作对照' }
+    ]
+  }
+];
+
+/* 顶栏跑马灯挑哪几项（顺序即显示顺序） */
+const MARQUEE_PICK = ['.DXY', 'US10Y', 'USDCNY', 'sh000001', '.SPX', '.VIX', 'hkHSI', 'OIL_DESK'];
+
+/* 腾讯迷你趋势取几根日线 */
+const SPARK_DAYS = 60;
+
+/* --------------------------------------------------------------------------
+   3. 情报流频道
+   -------------------------------------------------------------------------- */
+const NEWS_CHANNELS = [
+  { id: 'all', label: '全部', kw: [] },
+  {
+    id: 'chain', label: '产业链',
+    kw: ['原油', '石脑油', '汽油', '柴油', '航煤', '芳烃', '对二甲苯', 'PX', 'PTA', '精对苯二甲酸',
+         '乙二醇', 'MEG', '聚酯', '瓶片', 'PET', '短纤', '涤纶', '长丝', 'POY', 'FDY', 'DTY',
+         '切片', '加工差', '加工费', '现金流', '检修', '装置', '开工', '负荷', '仓单', '库存',
+         '郑商所', '大商所', '上期所', '上期能源', '化纤', '纺织原料', '再生', 'OPEC', '减产', '炼厂']
+  },
+  {
+    id: 'macro', label: '宏观消费',
+    kw: ['社会消费品零售', '社零', '消费', '零售', 'CPI', 'PPI', 'PMI', '内需', '促消费', '以旧换新',
+         '出口', '进口', '外贸', 'GDP', '工业增加值', '固定资产投资', '房地产', '就业', '关税',
+         '补贴', '专项债', '社融', 'M2', '信贷']
+  },
+  {
+    id: 'apparel', label: '服装',
+    kw: ['服装', '成衣', '鞋服', '品牌服饰', '快时尚', '秋冬', '春夏', '棉花', '棉纱', '优衣库',
+         '耐克', 'Nike', '阿迪达斯', 'Adidas', 'Zara', 'H&M', 'Shein', 'SHEIN', '跨境电商',
+         '亚马逊', '羽绒服', '运动鞋服', '纺服']
+  },
+  {
+    id: 'bonds', label: '国债',
+    kw: ['国债', '收益率', '债市', '债券', '央行', '货币政策', '降准', 'MLF', '逆回购', '资金面',
+         '银行间', 'LPR', '财政', '特别国债', '国开债', '10年期', '十年期', '中标', '美联储']
+  },
+  {
+    id: 'fed', label: '美联储',
+    kw: ['美联储', 'Fed', 'FOMC', '鲍威尔', 'Powell', '加息', '降息', '升息', '利率决议',
+         '点阵图', '缩表', '议息', '联邦基金利率', '美国CPI', '美国通胀', '美国就业', '非农就业']
+  },
+  {
+    id: 'equity', label: '股市',
+    kw: ['A股', '沪指', '上证指数', '深证成指', '创业板', '恒生指数', '港股', '纳斯达克', '标普500',
+         '道琼斯', '美股', '股市', '北向资金', '融资余额', 'IPO', '退市', '涨停', '跌停', '回购']
+  }
+];
+
+/* 无论选中哪个频道，都值得高亮的市场词（数字与方向类）。
+   频道关键词在选中某频道时会叠加进来，见 news.js 的 ranges()。 */
+const NEWWORDS = [
+  '涨停', '跌停', '大涨', '大跌', '暴涨', '暴跌', '创历史新高', '创新低',
+  '超预期', '不及预期', '加息', '降息', '降准', '升破', '跌破', '失守',
+  '涨超', '跌超', '涨幅', '跌幅', '净流入', '净流出', '停产', '复产'
+];
+
+/* --------------------------------------------------------------------------
+   4. 日历
+   exact = 官方公布的确切日期；rule = 固定规则推算（页面标"约"并给官方链接）
+   FOMC 日期来源：federalreserve.gov/monetarypolicy/fomccalendars.htm（核对于 2026-09-22）
+   EIA  日期来源：eia.gov/petroleum/supply/weekly/schedule.cfm（2026 年假日顺延表）
+   ⚠ 这两张表是硬编码的，见 §5 的过期守卫。
+   -------------------------------------------------------------------------- */
+const CAL_VERIFIED_AT = '2026-09-22';
+
+const FOMC_DATES = [                       // 第二天为决议日，14:00 ET 发布声明
+  '2026-01-28', '2026-03-18', '2026-04-29', '2026-06-17',
+  '2026-07-29', '2026-09-16', '2026-10-28', '2026-12-09',
+  '2027-01-27', '2027-03-17', '2027-04-28', '2027-06-16',
+  '2027-07-28', '2027-09-15', '2027-10-27', '2027-12-08'
+];
+
+const EIA_HOLIDAY_SHIFT = {                // 键=常规周三，值=官方实际发布日
+  '2026-01-21': '2026-01-22', '2026-02-18': '2026-02-19', '2026-05-27': '2026-05-28',
+  '2026-09-09': '2026-09-10', '2026-10-14': '2026-10-15', '2026-11-11': '2026-11-12',
+  '2027-01-20': '2027-01-21', '2027-02-17': '2027-02-18', '2027-05-26': '2027-05-27',
+  '2027-09-08': '2027-09-09', '2027-10-13': '2027-10-14', '2027-11-10': '2027-11-11'
+};
+
+const CALENDAR = [
+  {
+    id: 'fomc', label: 'FOMC 利率决议', kind: 'exact', periodDays: 44,
+    src: 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm',
+    note: '声明 14:00 ET，发布会 14:30 ET',
+    next: () => nextAtDates(FOMC_DATES, 14, 0),
+    prev: () => prevAtDates(FOMC_DATES, 14, 0)
+  },
+  {
+    id: 'eia', label: 'EIA 原油库存周报', kind: 'exact', periodDays: 7,
+    src: 'https://www.eia.gov/petroleum/supply/weekly/schedule.cfm',
+    note: '周三 10:30 ET，假日顺延已含',
+    next: () => nextEia()
+  },
+  {
+    id: 'nonfarm', label: '美国非农就业', kind: 'rule', periodDays: 30,
+    src: 'https://www.bls.gov/schedule/news_release/empsit.htm',
+    note: '每月第一个周五 08:30 ET',
+    next: () => nextNthWeekdayEt(5, 1, 8, 30)
+  },
+  {
+    id: 'cpi', label: '美国 CPI', kind: 'rule', periodDays: 30,
+    src: 'https://www.bls.gov/schedule/news_release/cpi.htm',
+    note: '约每月中旬 08:30 ET',
+    next: () => nextMonthDayEt(12, 8, 30)
+  },
+  {
+    id: 'pmi', label: '中国官方制造业PMI', kind: 'rule', periodDays: 30,
+    src: 'https://www.stats.gov.cn/sj/zxfb/',
+    note: '约月末最后一日 09:30 CST',
+    next: () => nextMonthEnd(9, 30)
+  },
+  {
+    id: 'retail', label: '中国社零 / 工业增加值', kind: 'rule', periodDays: 30,
+    src: 'https://www.stats.gov.cn/sj/zxfb/',
+    note: '约每月 15 日 10:00 CST',
+    next: () => nextMonthDay(15, 10, 0)
+  },
+  {
+    id: 'trade', label: '中国进出口（海关总署）', kind: 'rule', periodDays: 30,
+    src: 'http://www.customs.gov.cn/',
+    note: '约每月 7–14 日',
+    next: () => nextMonthDay(10, 10, 0)
+  }
+];
+
+/* --------------------------------------------------------------------------
+   5. 时间与日历工具
+   -------------------------------------------------------------------------- */
+
+/** 美国是否处于夏令时（3月第2个周日 – 11月第1个周日，注意差值的边界是 UTC 时刻） */
+function usDst (d) {
+  const y = d.getUTCFullYear();
+  const march = new Date(Date.UTC(y, 2, 1));
+  const nov = new Date(Date.UTC(y, 10, 1));
+  const mar2sun = 1 + ((7 - march.getUTCDay()) % 7) + 7;
+  const nov1sun = 1 + ((7 - nov.getUTCDay()) % 7);
+  const t = d.getTime();
+  return t >= Date.UTC(y, 2, mar2sun, 7) && t < Date.UTC(y, 10, nov1sun, 6);
+}
+
+/** 给定 ET 的 (日,时,分)，返回 UTC 时间戳 */
+function etToUtc (day, hh, mm) {
+  const off = usDst(new Date(Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), 12))) ? 4 : 5;
+  return Date.UTC(day.getUTCFullYear(), day.getUTCMonth(), day.getUTCDate(), hh + off, mm);
+}
+
+function nextAtDates (list, hourEt, minEt) {
+  const now = Date.now();
+  for (const s of list) {
+    const [y, m, d] = s.split('-').map(Number);
+    const t = etToUtc(new Date(Date.UTC(y, m - 1, d)), hourEt, minEt);
+    if (t > now) return t;
+  }
+  return null;
+}
+
+function prevAtDates (list, hourEt, minEt) {
+  const now = Date.now();
+  let best = null;
+  for (const s of list) {
+    const [y, m, d] = s.split('-').map(Number);
+    const t = etToUtc(new Date(Date.UTC(y, m - 1, d)), hourEt, minEt);
+    if (t <= now && (best === null || t > best)) best = t;
+  }
+  return best;
+}
+
+/** 下一个 EIA 发布时刻：周三 10:30 ET，含官方假日顺延表 */
+function nextEia () {
+  const now = new Date();
+  for (let i = 0; i < 21; i++) {
+    const d = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + i));
+    if (d.getUTCDay() !== 3) continue;
+    const key = d.toISOString().slice(0, 10);
+    const target = EIA_HOLIDAY_SHIFT[key] || key;
+    const [y, m, dd] = target.split('-').map(Number);
+    const t = etToUtc(new Date(Date.UTC(y, m - 1, dd)), 10, 30);
+    if (t > Date.now()) return t;
+  }
+  return null;
+}
+
+function nextNthWeekdayEt (weekday, nth, hh, mm) {
+  for (let m = 0; m < 4; m++) {
+    const base = new Date();
+    base.setUTCDate(1);
+    base.setUTCMonth(base.getUTCMonth() + m);
+    const y = base.getUTCFullYear(), mo = base.getUTCMonth();
+    const firstWd = new Date(Date.UTC(y, mo, 1)).getUTCDay();
+    const day = 1 + ((7 - firstWd + weekday) % 7) + (nth - 1) * 7;
+    const t = etToUtc(new Date(Date.UTC(y, mo, day)), hh, mm);
+    if (t > Date.now()) return t;
+  }
+  return null;
+}
+
+function nextMonthDayEt (day, hh, mm) {
+  for (let m = 0; m < 4; m++) {
+    const now = new Date();
+    const y = now.getUTCFullYear(), mo = now.getUTCMonth() + m;
+    const t = etToUtc(new Date(Date.UTC(y, mo, day)), hh, mm);
+    if (t > Date.now()) return t;
+  }
+  return null;
+}
+
+function nextMonthDay (day, hh, mm) {
+  const now = new Date();
+  for (let m = 0; m < 4; m++) {
+    const cand = new Date(now.getFullYear(), now.getMonth() + m, day, hh, mm, 0, 0);
+    if (cand.getTime() > now.getTime()) return cand.getTime();
+  }
+  return null;
+}
+
+function nextMonthEnd (hh, mm) {
+  const now = new Date();
+  for (let m = 0; m < 4; m++) {
+    const last = new Date(now.getFullYear(), now.getMonth() + m + 1, 0, hh, mm, 0, 0);
+    if (last.getTime() > now.getTime()) return last.getTime();
+  }
+  return null;
+}
+
+/** 剩余毫秒 → 「3天 06时」 */
+function fmtLeft (ms) {
+  if (ms == null) return '—';
+  if (ms < 0) return '已过';
+  const d = Math.floor(ms / 864e5);
+  const h = Math.floor((ms % 864e5) / 36e5);
+  const mi = Math.floor((ms % 36e5) / 6e4);
+  if (d > 0) return d + '天 ' + String(h).padStart(2, '0') + '时';
+  if (h > 0) return h + '时 ' + String(mi).padStart(2, '0') + '分';
+  return mi + '分';
+}
+
+/** 距今多久 → 「2分钟前」 */
+function fmtAgo (ts) {
+  if (!ts) return '—';
+  const s = Math.max(0, (Date.now() - ts) / 1000);
+  if (s < 60) return Math.round(s) + '秒前';
+  if (s < 3600) return Math.round(s / 60) + '分钟前';
+  if (s < 86400) return Math.round(s / 3600) + '小时前';
+  return Math.round(s / 86400) + '天前';
+}
