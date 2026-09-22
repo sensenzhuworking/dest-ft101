@@ -12,7 +12,32 @@
    每次改动源码都要 +1。页脚会显示它，用来确认「线上跑的到底是哪一版」——
    上传 / 部署之后如果页脚还是旧号，说明浏览器缓存没清或传错了路径。
    -------------------------------------------------------------------------- */
-const BUILD = '2026-09-23.2';
+const BUILD = '2026-09-23.4';
+
+/* 自检要探测的本地文件。
+   作用：把「我传了但没生效」变成一个页面自己能回答的问题 ——
+   任何一个 404 都会被点名，而不是留下一个空白面板让人猜。 */
+const SELF_CHECK_FILES = [
+  'index.html',
+  'assets/app.css',
+  'assets/app.js',
+  'assets/charts.js',
+  'assets/config.js',
+  'assets/data.js',
+  'assets/news.js',
+  'assets/vendor/lightweight-charts.standalone.production.js',
+  'data/desk.json'
+];
+
+/* 需要确认已经加载的 JS 模块（用 typeof 判断，因为顶层 const 不挂在 window 上） */
+const SELF_CHECK_MODULES = [
+  { label: '配置',    file: 'assets/config.js',   has: () => typeof BUILD !== 'undefined' },
+  { label: '数据层',  file: 'assets/data.js',     has: () => typeof Desk !== 'undefined' },
+  { label: 'K 线',    file: 'assets/charts.js',   has: () => typeof Charts !== 'undefined' },
+  { label: '情报流',  file: 'assets/news.js',     has: () => typeof News !== 'undefined' },
+  { label: '图表库',  file: 'assets/vendor/lightweight-charts.standalone.production.js',
+                                                  has: () => typeof LightweightCharts !== 'undefined' }
+];
 
 const KLINE_ORDER = ['SC', 'PX', 'PTA', 'MEG', 'PF', 'PR'];
 

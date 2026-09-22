@@ -51,7 +51,8 @@ const Desk = (() => {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), ms);
     try {
-      const res = await fetch(url, { signal: ac.signal, credentials: 'omit', mode: 'cors' });
+      const res = await fetch(url, { signal: ac.signal, credentials: 'omit', mode: 'cors',
+                                referrerPolicy: 'no-referrer' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       return await res.json();
     } finally { clearTimeout(timer); }
@@ -61,7 +62,8 @@ const Desk = (() => {
     const ac = new AbortController();
     const timer = setTimeout(() => ac.abort(), ms);
     try {
-      const res = await fetch(url, { signal: ac.signal, credentials: 'omit', mode: 'cors' });
+      const res = await fetch(url, { signal: ac.signal, credentials: 'omit', mode: 'cors',
+                                referrerPolicy: 'no-referrer' });
       if (!res.ok) throw new Error('HTTP ' + res.status);
       const buf = await res.arrayBuffer();
       // 腾讯行情是 GBK。中文名我们不用（自己带标签），解码失败也不影响数字。
@@ -88,6 +90,7 @@ const Desk = (() => {
         (buster ? (url.includes('?') ? '&' : '?') + '_=' + Date.now() : '');
       s.src = finalUrl;
       s.async = true;
+      s.referrerPolicy = 'no-referrer';   // 有的接口按 Referer 拦外部站（东财就是这样）
       s.onerror = () => done(new Error('network'));
       s.onload = () => {
         const v = window[varName];

@@ -462,6 +462,7 @@
       ['prov', '打印数据血统与源间冲突'],
       ['desk', '本地数据库状态与一句话总结'],
       ['ai', '打印 AI 复盘原文'],
+      ['doctor', '自检：逐个文件探测 + 每个数据源连通性'],
       ['refresh', '清缓存并重新拉取全部'],
       ['clear', '清屏'],
       ['close / Esc', '关闭终端']
@@ -568,6 +569,13 @@
         return;
       }
 
+      if (c0 === 'doctor' || c0 === 'check' || c0 === '自检') {
+        say('  正在自检，逐个文件探一遍…');
+        const lines = await runDoctor();
+        lines.forEach(l => say('  ' + l));
+        return;
+      }
+
       if (c0 === 'refresh') { await boot(true); say('  已清缓存并重新拉取', 'ok'); return; }
 
       const sym = findSymbol(w0);
@@ -605,8 +613,108 @@
       });
       return { show, hide };
     }
-    return { init, show, hide };
+    return { init, show, hide, exec: cmd => { show(); run(cmd); } };
   })();
+
+  /* ======================================================================
+     9b. 自检 —— 让页面自己回答「哪里没生效」
+     起因：只上传错一个文件，面板就是一片空白，而空白是最难排查的状态。
+     现在任何一个 404 都会被点名，并且顺带测一遍每个数据源通不通。
+     ====================================================================== */
+
+  /** 逐个文件 HEAD 探测。返回 HTTP 状态码，0 表示连不上 */
+  async function probeFile (path) {
+    try {
+      const r = await fetch(path, { method: 'HEAD', cache: 'no-store' });
+      return r.status;
+    } catch (e) { return 0; }
+  }
+
+  async function runDoctor () {
+    const out = [];
+    const tick = ok => ok ? '<span class="ok">✓</span>' : '<span class="er">✗</span>';
+
+    out.push('<span class="hl">模块</span>');
+    for (const m of SELF_CHECK_MODULES) {
+      let ok = false;
+      try { ok = !!m.has(); } catch (e) { ok = false; }
+      out.push('  ' + tick(ok) + ' ' + esc(m.label).padEnd(8, ' ') +
+               '<span style="opacity:.6">' + esc(m.file) + '</span>' +
+               (ok ? '' : '  <span class="er">没加载 —— 这个文件多半 404 了</span>'));
+    }
+    out.push('  ' + tick(true) + ' 构建号  <span class="hl">' + esc(BUILD) + '</span>');
+
+    out.push('');
+    out.push('<span class="hl">文件探测</span>（相对当前页面）');
+    const codes = await Promise.all(SELF_CHECK_FILES.map(f => probeFile(f)));
+    SELF_CHECK_FILES.forEach((f, i) => {
+      const c = codes[i];
+      const ok = c === 200;
+      out.push('  ' + tick(ok) + ' ' + esc(f).padEnd(56, ' ') +
+               (ok ? '<span style="opacity:.6">200</span>'
+                   : '<span class="er">' + (c || '连不上') + '</span>' +
+                     (c === 404 ? '  <span class="er">文件不在这个路径</span>' : '')));
+    });
+    out.push('  <span style="opacity:.6">页面地址：' + esc(location.origin + location.pathname) + '</span>');
+
+    out.push('');
+    out.push('<span class="hl">联网探测</span>（每个数据源各打一发）');
+    const probes = [
+      ['东财新闻', () => Desk.fetchJson('https://np-listapi.eastmoney.com/comm/web/getFastNewsList'
+        + '?client=web&biz=web_724&fastColumn=102&sortEnd=&pageSize=3&req_trace=1', 9000)
+        .then(j => '3 条样本，实际返回 ' + (((j.data || {}).fastNewsList || []).length) + ' 条')],
+      ['腾讯指数', () => Desk.txQuotes(['sh000001']).then(q => q && q.sh000001
+        ? '上证 ' + fmtNum(q.sh000001.value, 2) : Promise.reject(new Error('无返回')))],
+      ['CNBC', () => Desk.cnbcQuotes(['US10Y']).then(q => q && q.US10Y
+        ? '美债10Y ' + fmtNum(q.US10Y.value, 3) + '%' : Promise.reject(new Error('无返回')))],
+      ['东财仓单', () => Desk.emStock(['TA']).then(q => q && q.TA
+        ? 'PTA 仓单 ' + fmtNum(q.TA.zh * 5 / 10000, 4) + ' 万吨 (' + q.TA.date + ')'
+        : Promise.reject(new Error('无返回')))]
+    ];
+    for (const [name, fn] of probes) {
+      try {
+        const msg = await fn();
+        out.push('  ' + tick(true) + ' ' + esc(name).padEnd(10, ' ') + esc(String(msg)));
+      } catch (e) {
+        out.push('  ' + tick(false) + ' ' + esc(name).padEnd(10, ' ') +
+                 '<span class="er">' + esc(e.message || String(e)) + '</span>');
+      }
+    }
+
+    out.push('');
+    out.push('<span class="hl">情报流状态</span>');
+    try {
+      const n = (typeof News !== 'undefined' && News.state) ? News.state.items.length : null;
+      out.push('  已载 ' + (n === null ? '<span class="er">模块未加载</span>' : n + ' 条') +
+               ' · 频道 <span class="hl">' + esc((News.state || {}).channel || '—') + '</span>' +
+               ' · 页面上渲染 <span class="hl">' + document.querySelectorAll('#newsList .ni').length + '</span> 条');
+    } catch (e) {
+      out.push('  <span class="er">读取失败：' + esc(e.message) + '</span>');
+    }
+
+    out.push('');
+    out.push('<span style="opacity:.6">对照：文件探测全 200、模块全 ✓、联网全 ✓ = 部署没问题。</span>');
+    return out;
+  }
+
+  /** 启动时先确认模块都在。缺了就顶部挂一条横幅，别让面板静默空白 */
+  function moduleBanner () {
+    const missing = [];
+    for (const m of SELF_CHECK_MODULES) {
+      let ok = false;
+      try { ok = !!m.has(); } catch (e) { ok = false; }
+      if (!ok) missing.push(m);
+    }
+    if (!missing.length) return true;
+    const box = document.createElement('div');
+    box.className = 'banner';
+    box.innerHTML = '<b>有 ' + missing.length + ' 个文件没加载成功</b>　' +
+      missing.map(m => esc(m.file)).join('、') +
+      '　—— 多半是上传时路径不对（应该放在仓库的 assets/ 目录下，不是仓库根目录）。' +
+      '　按 <b>/</b> 或点底部「自检」看逐个文件的探测结果。';
+    document.body.insertBefore(box, document.body.firstChild);
+    return false;
+  }
 
   /* ======================================================================
      10. 选择与启动

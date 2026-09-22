@@ -35,7 +35,8 @@ const News = (() => {
     const url = API.replace('{end}', encodeURIComponent(cursor))
                    .replace('{size}', size)
                    .replace('{t}', Date.now());
-    const res = await fetch(url, { credentials: 'omit', mode: 'cors' });
+    const res = await fetch(url, { credentials: 'omit', mode: 'cors',
+                                referrerPolicy: 'no-referrer' });   // 关键：不带 Referer，否则东财 WAF 返回 567
     if (!res.ok) throw new Error('HTTP ' + res.status);
     const j = await res.json();
     const d = j && j.data;
