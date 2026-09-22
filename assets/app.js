@@ -48,7 +48,8 @@
       const { bars, from } = await Desk.kline(S.sym, S.period, { buster });
       if (!bars.length) throw new Error('空数据');
       S.bars = bars;
-      Charts.render($('kline'), bars, S.period === '60' ? 220 : 180);
+      const pdef = PERIODS.find(p => p.id === S.period) || {};
+      Charts.render($('kline'), bars, pdef.tail || 180);
       paintQuote(bars);
       const last = bars[bars.length - 1];
       $('klineState').innerHTML =
@@ -182,7 +183,9 @@
             (it.ts ? ' · ' + new Date(it.ts).toLocaleString('zh-CN', { hour12: false }) : '')) + '">' +
             esc(it.label) + '</div>' +
           '<div class="row"><span class="vv">' + esc(valText(it)) + '</span>' +
-          '<span class="pc ' + cls(it.pct) + '">' + fmtPct(it.pct, 2) + '</span></div>' +
+          (it.pct == null && it.chg != null
+            ? '<span class="pc ' + cls(it.chg) + '">' + fmtSigned(it.chg, it.digits) + '</span>'
+            : '<span class="pc ' + cls(it.pct) + '">' + fmtPct(it.pct, 2) + '</span>') + '</div>' +
           spark +
           (it.live ? '' : '<div class="ft">日终 ' + esc(it.asOf || '') + '</div>') +
           '</div>';
@@ -264,7 +267,9 @@
       '<span><i class="dot conflict"></i>源间不一致 ' + nConflict + ' 组</span>' +
       '<span>覆盖 ' + (h.series_total || 0) + ' 条序列</span>' +
       '<span>数据库 ' + esc(S.desk.db || '—') + ' · 生成 ' +
-      esc((S.desk.generated_at || '').slice(0, 16).replace('T', ' ')) + '</span>';
+      esc((S.desk.generated_at || '').slice(0, 16).replace('T', ' ')) + '</span>' +
+      '<span title="每次改代码都会 +1。上传后页脚还是旧号 = 浏览器缓存没清，或传错了路径">' +
+      '构建 <b class="dim">' + esc(BUILD) + '</b></span>';
   }
 
   /** 数据新鲜度：每一层单独说了算，不混成一个「实时」 */

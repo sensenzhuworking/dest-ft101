@@ -7,12 +7,38 @@
 /* --------------------------------------------------------------------------
    1. K 线品种（CN 期货，走新浪 JSONP）
    -------------------------------------------------------------------------- */
+/* --------------------------------------------------------------------------
+   0. 构建标记
+   每次改动源码都要 +1。页脚会显示它，用来确认「线上跑的到底是哪一版」——
+   上传 / 部署之后如果页脚还是旧号，说明浏览器缓存没清或传错了路径。
+   -------------------------------------------------------------------------- */
+const BUILD = '2026-09-23.2';
+
 const KLINE_ORDER = ['SC', 'PX', 'PTA', 'MEG', 'PF', 'PR'];
 
 const PERIODS = [
-  { id: 'D',  label: '日线', type: 101 },
-  { id: '60', label: '60分', type: 60 },
-  { id: 'W',  label: '周线', type: 'weekly' }   // 由日线本地聚合，少打一次请求
+  { id: '1',  label: '1分',  type: 1,  tail: 400 },   // 新浪 type=1，仅覆盖最近约 3 个交易日
+  { id: '60', label: '60分', type: 60, tail: 220 },
+  { id: 'D',  label: '日线', type: 101, tail: 180 },
+  { id: 'W',  label: '周线', type: 'weekly', tail: 180 }   // 由日线本地聚合，少打一次请求
+];
+
+/* --------------------------------------------------------------------------
+   0b. 可以在浏览器里【复现】你管道的那部分
+   东财数据中心的期货仓单接口，CORS 放行，且实测与你的 CirculatingInventory
+   逐日完全一致：
+
+     TA/PX/PF  5 吨/张   PR  15 吨/张   （来自你 _SCHEMA.md 的交割单位表）
+     2026-09-16  TA 13435 张 × 5 ÷ 10000 = 6.7175 万吨
+     你 Excel Inventory 同日 = 6.7175 万吨            ← 完全吻合
+
+   所以仓单不需要等你的数据。但【现货】不行，见 config 下面的注释。
+   -------------------------------------------------------------------------- */
+const WAREHOUSE = [
+  { id: 'TA', label: 'PTA',    tons: 5  },
+  { id: 'PX', label: 'PX',     tons: 5  },
+  { id: 'PF', label: '短纤',   tons: 5  },
+  { id: 'PR', label: '瓶片',   tons: 15 }
 ];
 
 /* --------------------------------------------------------------------------
@@ -67,6 +93,16 @@ const WORLD_GROUPS = [
       { id: 'USDCNY', label: 'USDCNY', src: 'deskFx', digits: 4 },
       { id: 'USDJPY', label: 'USDJPY', src: 'deskFx', digits: 2 },
       { id: 'USDKRW', label: 'USDKRW', src: 'deskFx', digits: 2 }
+    ]
+  },
+  {
+    id: 'wh', label: '交易所仓单（在线复现）',
+    note: '东财数据中心 · 日频 · 与你的 CirculatingInventory 逐日一致',
+    items: [
+      { id: 'TA', label: 'PTA 仓单',  src: 'em_stock', tons: 5,  digits: 4, suffix: '万吨' },
+      { id: 'PX', label: 'PX 仓单',   src: 'em_stock', tons: 5,  digits: 4, suffix: '万吨' },
+      { id: 'PF', label: '短纤 仓单', src: 'em_stock', tons: 5,  digits: 4, suffix: '万吨' },
+      { id: 'PR', label: '瓶片 仓单', src: 'em_stock', tons: 15, digits: 4, suffix: '万吨' }
     ]
   },
   {

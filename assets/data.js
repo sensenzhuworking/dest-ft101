@@ -284,7 +284,48 @@ const Desk = (() => {
     return out;
   }
 
-  /* ---------------- 6. 组装全球市场面板 ---------------- */
+  /* ---------------- 6. 东财数据中心：交易所仓单 ----------------
+     这是唯一能在浏览器里【复现你管道】的一块：
+       实测 2026-09-16 TA 13435 张 × 5 ÷ 10000 = 6.7175 万吨
+       你 Excel Inventory 同日 = 6.7175 万吨 —— 完全吻合
+     所以仓单不用等你的数据。
+
+     拿不到现货的原因（实测过，不是推测）：
+       www.100ppi.com/sf/ 和 /mprice/ 都【没有 CORS 头】，
+       而且返回的是混淆过的反爬 JS 挑战页，不是数据；
+       郑商所/大商所的日行情同样没有 CORS，而且是 http（https 页面会被混合内容拦掉）。
+     结论：现货必须在你有网络的电脑上抓，或者走一个服务端代理。
+  */
+  const EM_DC = 'https://datacenter-web.eastmoney.com/api/data/v1/get';
+
+  async function emStock (codes) {
+    const out = {};
+    await mapLimit(codes, 2, async (code) => {
+      const key = 'emst:' + code;
+      const cached = get(key, 6 * 3600e3);            // 仓单日频，缓存 6 小时
+      if (cached) { out[code] = cached; return; }
+      const filter = encodeURIComponent('(SECURITY_CODE="' + code + '")');
+      const url = EM_DC + '?reportName=RPT_FUTU_STOCKDATA'
+        + '&columns=SECURITY_CODE,TRADE_DATE,ON_WARRANT_NUM,ADDCHANGE'
+        + '&filter=' + filter
+        + '&pageNumber=1&pageSize=2&sortColumns=TRADE_DATE&sortTypes=-1&source=WEB&client=WEB';
+      const j = await fetchJson(url, 9000);
+      const rows = (j && j.result && j.result.data) || [];
+      if (!rows.length) return;
+      const r = rows[0];
+      const rec = {
+        zh: +r.ON_WARRANT_NUM,
+        chgZh: +r.ADDCHANGE || 0,
+        date: String(r.TRADE_DATE || '').slice(0, 10),
+        live: false, src: '东财数据中心'
+      };
+      out[code] = rec;
+      put(key, rec);
+    });
+    return out;
+  }
+
+  /* ---------------- 7. 组装全球市场面板 ---------------- */
 
   function deskValue (spec) {
     const d = state.desk;
@@ -313,11 +354,13 @@ const Desk = (() => {
 
     const txIds    = all.filter(i => i.src === 'tx').map(i => i.id);
     const cnbcIds  = all.filter(i => i.src === 'cnbc').map(i => i.id);
+    const whIds    = all.filter(i => i.src === 'em_stock').map(i => i.id);
 
-    // 行情类并行；单源失败不影响别的源
-    const [txRes, cnbcRes] = await Promise.all([
+    // 三类在线源并行；单源失败不影响别的源
+    const [txRes, cnbcRes, whRes] = await Promise.all([
       txQuotes(txIds).catch(e => { errs.push('腾讯行情: ' + e.message); return null; }),
-      cnbcQuotes(cnbcIds).catch(e => { errs.push('CNBC: ' + e.message); return null; })
+      cnbcQuotes(cnbcIds).catch(e => { errs.push('CNBC: ' + e.message); return null; }),
+      emStock(whIds).catch(e => { errs.push('仓单: ' + e.message); return null; })
     ]);
 
     const picks = {};
@@ -326,6 +369,15 @@ const Desk = (() => {
       if (it.src === 'cnbc') picks[it.id] = cnbcRes && cnbcRes[it.id];
       if (it.src === 'desk') picks[it.id] = deskValue(it.desk);
       if (it.src === 'deskFx') picks[it.id] = deskFxValue(it.id);
+      if (it.src === 'em_stock') {
+        const r = whRes && whRes[it.id];
+        if (r) picks[it.id] = {
+          value: r.zh * it.tons / 10000,        // 张 → 万吨，与你的 CirculatingInventory 同口径
+          chg: r.chgZh * it.tons / 10000,
+          pct: null,                            // 仓单看增减，不看百分比
+          live: false, asOf: r.date, src: r.src
+        };
+      }
     }
     // 派生项：2s10s = 10Y − 2Y
     for (const it of all) {
@@ -395,7 +447,7 @@ const Desk = (() => {
 
   return {
     T, state, TTL,
-    loadDesk, loadAiDigest, kline, world, marqueeFrom, txKline, cnbcQuotes, txQuotes,
+    loadDesk, loadAiDigest, kline, world, marqueeFrom, txKline, cnbcQuotes, txQuotes, emStock,
     get, put, jsonp, fetchJson,
     desk: () => state.desk,
     worldAt: () => state.worldAt,
