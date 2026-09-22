@@ -315,6 +315,17 @@ body {
   border-radius: var(--r-sm); padding: 5px 7px; margin-top: 8px;
 }
 
+/* 启动时模块缺失的横幅。空白面板是最难排查的失败形态，所以要显式喊出来 */
+.banner {
+  background: var(--up-bg);
+  border-bottom: 1px solid rgba(240, 85, 78, .35);
+  color: var(--fg);
+  font-size: 12px; line-height: 1.6;
+  padding: 9px 14px;
+  position: sticky; top: 0; z-index: 40;
+}
+.banner b { color: var(--up); font-weight: 500; }
+
 /* ---------- 底部：热力图 + 血统 ------------------------------------------- */
 
 .bottombar {

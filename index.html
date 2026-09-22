@@ -139,6 +139,11 @@
 <footer class="bottombar">
   <div class="heat" id="heat" role="group" aria-label="全品种涨跌热力"></div>
   <div class="prov" id="prov"></div>
+  <p class="prov" style="margin-top:6px">
+    <button class="btn" id="btnSelfCheck" type="button"
+            title="逐个文件探测 + 每个数据源连通性，用来确认部署有没有生效">自检</button>
+    <span>传完新代码记得按 Command+Shift+R 强制刷新；页脚构建号变了才算生效</span>
+  </p>
   <div class="prov" id="fresh"></div>
   <p class="summary" id="summary">正在读取本地数据库…</p>
   <div class="ai" id="ai" hidden></div>

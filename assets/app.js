@@ -761,6 +761,9 @@
       if (S.desk.chart_map[code]) { S.sym = code; selectSym(); }
       else $('klineState').innerHTML = '<b>' + esc(code) + '</b> 只有现货报价，没有盘面。';
     });
+    const btnSelf = $('btnSelfCheck');
+    if (btnSelf) btnSelf.addEventListener('click', () => Terminal.exec('doctor'));
+
     $('btnRefresh').addEventListener('click', async () => {
       $('btnRefresh').textContent = '刷新中';
       $('btnRefresh').disabled = true;
@@ -778,6 +781,12 @@
   }
 
   async function boot (force = false) {
+    // 模块没齐就别往下跑 —— 先把问题摆到明面上，而不是留一堆空面板
+    if (!moduleBanner()) {
+      $('klineState').innerHTML = '<span class="up">有文件没加载成功，K 线无法初始化。' +
+        '按 / 或点底部「自检」看是哪个文件 404 了。</span>';
+      return;
+    }
     if (force) Desk.nukeCache();
     bindOnce();
     if (!boot._newsInit) { boot._newsInit = true; News.init(); }
