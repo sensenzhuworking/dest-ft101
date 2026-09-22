@@ -1,0 +1,235 @@
+/* 用 Chrome DevTools Protocol 真机跑一遍交互，顺便抓 console 报错。
+   不装任何依赖：Node 22 自带 WebSocket 和 fetch。
+   用法：node tools/e2e_check.mjs <url> */
+const URL_ = process.argv[2] || 'http://127.0.0.1:8791/';
+const PORT = 9333;
+
+const { spawn } = await import('node:child_process');
+const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
+
+const chrome = spawn(CHROME, [
+  '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
+  `--remote-debugging-port=${PORT}`, '--window-size=1500,900',
+  '--user-data-dir=/tmp/cdp-desk-profile', URL_
+], { stdio: 'ignore' });
+
+const sleep = ms => new Promise(r => setTimeout(r, ms));
+
+async function target () {
+  for (let i = 0; i < 40; i++) {
+    try {
+      const list = await (await fetch(`http://127.0.0.1:${PORT}/json/list`)).json();
+      const p = list.find(t => t.type === 'page' && t.webSocketDebuggerUrl);
+      if (p) return p.webSocketDebuggerUrl;
+    } catch (e) { /* 还没起来 */ }
+    await sleep(300);
+  }
+  throw new Error('CDP 未就绪');
+}
+
+const wsUrl = await target();
+const ws = new WebSocket(wsUrl);
+await new Promise(r => ws.addEventListener('open', r, { once: true }));
+
+let id = 0;
+const pending = new Map();
+const logs = [];
+
+ws.addEventListener('message', ev => {
+  const m = JSON.parse(ev.data);
+  if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
+  if (m.method === 'Runtime.consoleAPICalled') {
+    const p = m.params;
+    if (p.type === 'error' || p.type === 'warning') {
+      logs.push('[' + p.type + '] ' + p.args.map(a => a.value ?? a.description ?? a.type).join(' '));
+    }
+  }
+  if (m.method === 'Runtime.exceptionThrown') {
+    const d = m.params.exceptionDetails;
+    const stack = (d.stackTrace?.callFrames || [])
+      .slice(0, 4).map(f => `      at ${f.functionName || '(匿名)'} ${f.url.split('/').pop()}:${f.lineNumber + 1}`).join('\n');
+    logs.push('[exception] ' + (d.exception?.description || d.text) + (stack ? '\n' + stack : ''));
+  }
+});
+
+function send (method, params = {}) {
+  const mid = ++id;
+  ws.send(JSON.stringify({ id: mid, method, params }));
+  return new Promise(r => pending.set(mid, r));
+}
+
+async function ev(expr) {
+  const r = await send('Runtime.evaluate', { expression: expr, awaitPromise: true, returnByValue: true });
+  if (r.result?.exceptionDetails) return { err: r.result.exceptionDetails.exception?.description };
+  return { v: r.result?.result?.value };
+}
+
+await send('Runtime.enable');
+await send('Log.enable');
+
+// 等页面把 K 线和新闻都跑完
+for (let i = 0; i < 30; i++) {
+  const s = await ev("document.querySelector('#klineState')?.textContent||''");
+  if (s.v && s.v.includes('根')) break;
+  await sleep(500);
+}
+await sleep(1500);
+
+const checks = [];
+const ok = (name, cond, extra = '') => checks.push([cond ? 'PASS' : 'FAIL', name, extra]);
+
+ok('链条节点 8 个', (await ev("document.querySelectorAll('#chain .node').length")).v === 8);
+ok('热力格子 13 个', (await ev("document.querySelectorAll('#heat .tile').length")).v === 13,
+   '实际 ' + (await ev("document.querySelectorAll('#heat .tile').length")).v);
+ok('K线报价已填', /\d/.test((await ev("document.getElementById('klineLast').textContent")).v || ''));
+ok('K线状态含源名', ((await ev("document.getElementById('klineState').textContent")).v || '').includes('新浪期货'));
+ok('价差卡 7 张', (await ev("document.querySelectorAll('.spread').length")).v === 7);
+ok('价差有迷你走势', (await ev("document.querySelectorAll('.spread svg').length")).v >= 5);
+ok('血统行有内容', ((await ev("document.getElementById('prov').textContent")).v || '').includes('序列'));
+ok('一句话总结已渲染', ((await ev("document.getElementById('summary').textContent")).v || '').length > 40);
+ok('日历有倒计时', /天|时|分/.test((await ev("document.querySelector('#calTop .vv')?.textContent")||{v:''}).v || ''));
+ok('日历进度条有宽度', ((await ev("document.querySelector('#calBar i')?.style.width")||{v:''}).v || '').match(/^\d/) !== null,
+   await ev("document.querySelector('#calBar i')?.style.width"));
+ok('情报流有条目', (await ev("document.querySelectorAll('.ni').length")).v >= 10,
+   '实际 ' + (await ev("document.querySelectorAll('.ni').length")).v);
+ok('情报有高亮词', (await ev("document.querySelectorAll('.ni mark').length")).v > 0);
+ok('宏观条有数值', (await ev("document.querySelectorAll('#marquee .mq .v').length")).v >= 5,
+   '实际 ' + (await ev("document.querySelectorAll('#marquee .mq .v').length")).v);
+
+// ---------- 本轮新增：全球市场 ----------
+// 这几项依赖外网。网络抖一下会被误报成「代码坏了」，所以先给一次重试机会，
+// 并把「重试后才通过」明确标出来 —— 假警报比漏报更耗人。
+let worldGroups = (await ev("document.querySelectorAll('#world .mgroup').length")).v;
+let worldRetried = false;
+if (worldGroups === 0) {
+  worldRetried = true;
+  await sleep(6000);
+  await ev("document.getElementById('btnRefresh') && document.getElementById('btnRefresh').click()");
+  await sleep(16000);
+  worldGroups = (await ev("document.querySelectorAll('#world .mgroup').length")).v;
+}
+ok('全球市场分组 >= 4', worldGroups >= 4,
+   '实际 ' + worldGroups + (worldRetried ? '（首次为 0，重试后取得 → 网络抖动，非代码问题）' : ''));
+const worldTiles = (await ev("document.querySelectorAll('#world .mtile').length")).v;
+ok('全球市场瓦片 >= 14', worldTiles >= 14, '实际 ' + worldTiles);
+ok('A股指数在面板里', ((await ev("document.getElementById('world').textContent")).v || '').includes('上证指数'));
+ok('港股指数在面板里', ((await ev("document.getElementById('world').textContent")).v || '').includes('恒生指数'));
+ok('美股指数在面板里', ((await ev("document.getElementById('world').textContent")).v || '').includes('纳斯达克'));
+ok('美债收益率在面板里', /美债10年/.test((await ev("document.getElementById('world').textContent")).v || ''));
+ok('美元指数在面板里', ((await ev("document.getElementById('world').textContent")).v || '').includes('美元指数'));
+ok('2s10s 利差已算出',
+   /-?\d+\.\d{3}pp/.test((await ev(`(()=>{const t=[...document.querySelectorAll('#world .mtile')]
+      .find(x=>x.textContent.includes('2s10s'));return t?t.textContent:'找不到'})()`)).v || ''),
+   await ev(`(()=>{const t=[...document.querySelectorAll('#world .mtile')]
+      .find(x=>x.textContent.includes('2s10s'));return t?t.textContent.replace(/\\s+/g,' '):'找不到'})()`));
+ok('指数有迷你趋势', (await ev("document.querySelectorAll('#world .mtile svg').length")).v >= 5,
+   '实际 ' + (await ev("document.querySelectorAll('#world .mtile svg').length")).v);
+ok('跑马灯含美元指数', ((await ev("document.getElementById('marquee').textContent")).v || '').includes('美元指数'));
+ok('跑马灯含美债10年', ((await ev("document.getElementById('marquee').textContent")).v || '').includes('美债10年'));
+
+// ---------- 在线复现的仓单 ----------
+ok('仓单分组已渲染', ((await ev("document.getElementById('world').textContent")).v || '').includes('仓单'));
+ok('仓单瓦片有 4 个', (await ev(`(()=>{const g=[...document.querySelectorAll('#world .mgroup')]
+   .find(x=>x.textContent.includes('仓单'));return g?g.querySelectorAll('.mtile').length:0})()`)).v === 4);
+ok('仓单单位是万吨', ((await ev("document.getElementById('world').textContent")).v || '').includes('万吨'));
+
+// ---------- 1 分钟线 ----------
+ok('周期按钮含 1分', ((await ev("document.getElementById('perTabs').textContent")).v || '').includes('1分'));
+
+// ---------- 构建号（用来确认线上跑的是哪一版）----------
+ok('页脚显示构建号', /构建\s*2026-\d{2}-\d{2}\.\d+/.test(
+   (await ev("document.getElementById('prov').textContent.replace(/\\s+/g,' ')")).v || ''),
+   (await ev("document.getElementById('prov').textContent.replace(/\\s+/g,' ')")).v?.match(/构建\s*\S+/)?.[0]);
+
+// ---------- 本轮新增：新鲜度 / 日历守卫 / AI ----------
+ok('数据新鲜度行有内容', ((await ev("document.getElementById('fresh').textContent")).v || '').includes('日频'));
+// AI 区块必须和产物状态一致：有 ai_digest.json 就要显示，没有就必须隐藏。
+// 之前这里写死了「必须隐藏」，有产物时会误报。
+const aiCode = (await ev("fetch('data/ai_digest.json',{method:'HEAD',cache:'no-store'})"
+  + ".then(r=>r.status).catch(()=>0)")).v;
+const aiShown = (await ev("!!document.getElementById('ai') && !document.getElementById('ai').hidden")).v;
+ok('AI 区块与产物状态一致',
+   aiCode === 200 ? aiShown === true : aiShown === false,
+   '产物 HTTP ' + aiCode + ' → 区块' + (aiShown ? '显示' : '隐藏'));
+if (aiCode === 200) {
+  ok('AI 复盘正文已渲染', (await ev("document.querySelectorAll('#ai p').length")).v >= 2,
+     (await ev("document.querySelectorAll('#ai p').length")).v + ' 段');
+  ok('AI 头部显示模型与 token',
+     /\d+\s*tokens/.test((await ev("((document.querySelector('#ai .ai-h')||{}).textContent||'')")).v || ''),
+     ((await ev("((document.querySelector('#ai .ai-h')||{}).textContent||'')")).v || '').replace(/\s+/g, ' '));
+}
+ok('日历过期守卫为空（数据未过期）',
+   ((await ev("document.getElementById('calWarn').textContent")).v || '') === '');
+
+// ---------- 本轮新增：配色已改帝国理工蓝 ----------
+const pillBg = (await ev(`getComputedStyle(document.querySelector('#symTabs button[aria-pressed=true]')).backgroundColor`)).v;
+ok('选中态是帝国理工蓝 #003e74', pillBg === 'rgb(0, 62, 116)', pillBg);
+const accent = (await ev("getComputedStyle(document.documentElement).getPropertyValue('--ic').trim()")).v;
+ok('强调色变量为 #0091d4', accent === '#0091d4', accent);
+const oldAmber = (await ev(`[...document.querySelectorAll('*')].some(el=>{
+  const s=getComputedStyle(el);
+  return /224,\\s*169,\\s*74/.test(s.color+s.backgroundColor+s.borderLeftColor+s.borderTopColor);
+})`)).v;
+ok('全站已无琥珀色残留', oldAmber === false);
+
+// 交互 1：点链条里的 MEG 节点 → 切到 EG 主连
+await ev("[...document.querySelectorAll('#chain .node')].find(n=>n.dataset.code==='MEG').click()");
+await sleep(4000);
+ok('点链条切品种', ((await ev("document.querySelector('#klineBroker').textContent")).v || '').includes('DCE'),
+   await ev("document.querySelector('#klineBroker').textContent"));
+
+// 交互 2：终端命令 chart SC W
+await ev("document.getElementById('termInput').value='chart SC W';" +
+         "document.getElementById('termInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
+await sleep(4500);
+ok('终端 chart SC W 生效',
+   ((await ev("document.querySelector('#perTabs button[aria-pressed=true]').textContent")).v === '周线') &&
+   ((await ev("document.getElementById('klineBroker').textContent")).v || '').includes('INE'),
+   await ev("document.getElementById('klineBroker').textContent"));
+
+// 交互 3：终端 help
+await ev("document.getElementById('termInput').value='help';" +
+         "document.getElementById('termInput').dispatchEvent(new KeyboardEvent('keydown',{key:'Enter',bubbles:true}))");
+await sleep(400);
+ok('终端 help 有输出', ((await ev("document.getElementById('termOut').textContent")).v || '').includes('chart'));
+
+// 交互 4：情报流频道过滤
+for (const ch of ['fed', 'chain', 'apparel', 'all']) {
+  await ev(`document.querySelector('#chanTabs button[data-ch="${ch}"]').click()`);
+  await sleep(300);
+  const n = (await ev("document.querySelectorAll('.ni').length")).v;
+  checks.push([n > 0 ? 'PASS' : 'WARN', '频道 ' + ch + ' 命中', String(n) + ' 条']);
+}
+
+// 交互 5：60 分钟线
+await ev("[...document.querySelectorAll('#perTabs button')].find(b=>b.dataset.per==='60').click()");
+await sleep(6000);
+ok('60 分钟线可取', ((await ev("document.getElementById('klineState').textContent")).v || '').includes('根'),
+   await ev("document.getElementById('klineState').textContent"));
+ok('60 分钟线时间轴可读',
+   /^\d{4}-\d{2}-\d{2} \d{2}:\d{2} → \d{4}-\d{2}-\d{2} \d{2}:\d{2}$/
+     .test(((await ev("document.getElementById('klineRange').textContent")).v || '').trim()),
+   await ev("document.getElementById('klineRange').textContent"));
+ok('K线画布已生成', (await ev("document.querySelectorAll('#kline canvas').length")).v >= 1);
+
+// ---------- 自检按钮必须真的存在（上次就是漏了这一条，导致改了 index.html 却没生效）----------
+ok('页脚有「自检」按钮', (await ev("!!document.getElementById('btnSelfCheck')")).v === true);
+ok('自检按钮已绑定（点击会打开终端）', await (async () => {
+  await ev("document.getElementById('btnSelfCheck') && document.getElementById('btnSelfCheck').click()");
+  await sleep(1200);
+  return (await ev("!document.getElementById('terminal').hidden")).v === true;
+})());
+await sleep(6000);
+ok('自检有输出（跑完一轮探测）',
+   ((await ev("document.getElementById('termOut').textContent")).v || '').includes('模块'),
+   ((await ev("document.getElementById('termOut').textContent")).v || '').replace(/\s+/g, ' ').slice(-60));
+await ev("document.getElementById('terminal').hidden = true");
+
+console.log('\n================ 交互检查 ================');
+for (const [s, n, e] of checks) console.log(`${s}  ${n}${e ? '  → ' + e : ''}`);
+console.log('\n================ 控制台输出 ================');
+console.log(logs.length ? logs.slice(0, 25).join('\n') : '干净，无 error / warning');
+
+ws.close();
+chrome.kill();
+process.exit(0);

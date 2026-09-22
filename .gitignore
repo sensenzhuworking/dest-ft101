@@ -1,0 +1,7 @@
+.DS_Store
+*.log
+.env
+data/ai_digest.json
+
+# 示例产物是提交的，真实产物不提交
+!data/ai_digest.example.json

@@ -1,0 +1,16 @@
+{
+  "generated_at": "2026-09-23T00:10:00+08:00",
+  "model": "deepseek-v4-flash",
+  "data_hash": "mock",
+  "cached": false,
+  "as_of": "2026-09-21",
+  "digest": "**乙二醇单日跌 7.6%** 是今天唯一的主线，把 PX 与瓶片的涨幅全吃掉了。成本端原油回落 7% 没能传导到下游，加工差在 PTA 环节已压到 630，瓶片现金流反而扩到 425 —— 说明减产预期先被定价在了 PX 上。",
+  "drivers": [
+    {"code": "MEG", "text": "主力换月至 eg2611 叠加 SUSPECT 标记，跌幅里有换月成分，**不要直接读成需求崩了**。"},
+    {"code": "PTA_PX", "text": "加工差单日压缩 59.5 元，PX 涨而 TA 不动，是典型的成本挤压。"}
+  ],
+  "warnings": ["MEG 期货与现货均带 SUSPECT 标记，且发生主力换月", "石脑油为单源且 HIGH_DISPERSION"],
+  "tokens": {"prompt_hit": 700, "prompt_miss": 195, "completion": 268, "cost_usd": 0.000121},
+  "peak": false,
+  "inputs": {"headlines": 8, "context_chars": 1182}
+}

@@ -1,0 +1,67 @@
+name: 每日 AI 复盘
+
+# 跑在 GitHub 的服务器上 —— 你的电脑关机、断网、带走都不影响。
+# 需要的唯一东西：把 DeepSeek 密钥存成仓库 secret（加密存储，不会出现在网页里，
+# 日志里也会自动打码）。
+#
+#   仓库 → Settings → Secrets and variables → Actions → New repository secret
+#   Name  填 DEEPSEEK_API_KEY
+#   Secret 粘贴你的密钥
+#
+# 配好之后：每天北京时间 17:00 自动跑一次；也可以在 Actions 页面手动触发。
+
+on:
+  schedule:
+    - cron: '0 9 * * *'
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+concurrency:
+  group: ai-digest
+  cancel-in-progress: false
+
+jobs:
+  digest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      # tools/ai_digest.py 只用标准库，不需要 pip install。
+      # 输入：仓库里的 data/desk.json（现货 / 加工费 / 血统）+ 运行时现取的东财 7x24 快讯
+      - name: 生成复盘
+        env:
+          DEEPSEEK_API_KEY: ${{ secrets.DEEPSEEK_API_KEY }}
+        run: |
+          if [ -z "$DEEPSEEK_API_KEY" ]; then
+            echo "::error::没有配置 DEEPSEEK_API_KEY。去 Settings → Secrets and variables → Actions 添加。"
+            exit 1
+          fi
+          python3 tools/ai_digest.py
+
+      - name: 报告结果
+        if: always()
+        run: |
+          if [ -f data/ai_digest.json ]; then
+            python3 -c "import json;d=json.load(open('data/ai_digest.json',encoding='utf-8'));t=d.get('tokens',{});print('模型    :',d.get('model'));print('复用上次:',d.get('cached'));print('tokens  :',t);print('输入新闻:',(d.get('inputs') or {}).get('headlines'),'条');print('复盘    :',(d.get('digest') or '')[:200])"
+          else
+            echo "::warning::没有生成 data/ai_digest.json，看上面「生成复盘」那一步的报错"
+          fi
+
+      - name: 有变化才提交
+        run: |
+          git config user.name  "ai-digest-bot"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add -f data/ai_digest.json
+          if git diff --cached --quiet; then
+            echo "产物没有变化（数据没变时会复用上次结论），跳过提交"
+          else
+            git commit -m "ai: $(date -u '+%Y-%m-%d') 每日复盘"
+            git push
+            echo "✓ 已提交并推送，GitHub Pages 一分钟后生效"
+          fi
