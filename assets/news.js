@@ -24,10 +24,15 @@ const News = (() => {
 
   let listEl, metaEl, autoEl, moreBtn;
 
-  /* ---------------- 取数 ---------------- */
+  /* 两个游标，用途不能混：
+       —— 轮询/刷新：永远传空游标，只要最新一批。不读写 state.sortEnd。
+       —— 「更早」：用 state.sortEnd 往更早翻，并把返回的新游标写回去。
 
-  async function fetchPage (size = 50) {
-    const url = API.replace('{end}', encodeURIComponent(state.sortEnd))
+     state.sortEnd 只在两处被写：① 首屏加载时种下初始值；② 点「更早」时推进。
+     绝不被轮询改到 —— 否则「更早」会拿到已经加载过的区间，被去重吃掉、看着像没反应。
+  */
+  async function api (size, cursor) {
+    const url = API.replace('{end}', encodeURIComponent(cursor))
                    .replace('{size}', size)
                    .replace('{t}', Date.now());
     const res = await fetch(url, { credentials: 'omit', mode: 'cors' });
@@ -35,6 +40,19 @@ const News = (() => {
     const j = await res.json();
     const d = j && j.data;
     if (!d || !Array.isArray(d.fastNewsList)) throw new Error('格式异常');
+    return d;
+  }
+
+  /** 最新一批。seed=true 时顺便种下翻页游标（只种一次） */
+  async function fetchLatest (size = 60, seed = false) {
+    const d = await api(size, '');
+    if (seed && !state.sortEnd) state.sortEnd = d.sortEnd || '';
+    return d.fastNewsList;
+  }
+
+  /** 更早一页，唯一的游标推进处 */
+  async function fetchOlder (size = 40) {
+    const d = await api(size, state.sortEnd);
     state.sortEnd = d.sortEnd || state.sortEnd;
     return d.fastNewsList;
   }
@@ -68,6 +86,15 @@ const News = (() => {
       if (ch.kw.some(k => text.includes(k))) s.add(ch.id);
     }
     return s;
+  }
+
+  /** 只保留最近 MAX_ITEMS 条。
+   *  被裁掉的 code 要从 seen 里删掉，否则「更早」翻回来会被去重逻辑吃掉、再也显示不出来。 */
+  const MAX_ITEMS = 400;
+  function trim () {
+    if (state.items.length <= MAX_ITEMS) return;
+    const dropped = state.items.splice(MAX_ITEMS);
+    for (const x of dropped) state.seen.delete(x.code);
   }
 
   /** 找出文本里所有频道关键词的位置，避免用 replace 造成标签嵌套 */
@@ -232,7 +259,7 @@ const News = (() => {
       state.loading = true;
       moreBtn.textContent = '读取中…';
       try {
-        const raw = await fetchPage(40);
+        const raw = await fetchOlder(40);
         const add = normalize(raw);
         state.items = state.items.concat(add);
         if (!add.length) state.done = true;
@@ -256,11 +283,12 @@ const News = (() => {
     try {
       // 记下刷新前的最新时间戳，用来数出这次新增了几条
       const before = state.items[0] ? state.items[0].sort : 0;
-      const raw = await fetchPage(60);
+      const raw = await fetchLatest(60, true);   // true = 首次顺便种下游标
       const add = normalize(raw);
       state.items.forEach(x => { x.isNew = false; });        // 上一轮的「新」标记要清掉
       if (before) add.forEach(x => { if (x.sort > before) x.isNew = true; });
       state.items = state.items.concat(add).sort((a, b) => b.sort - a.sort);
+      trim();
       state.lastNew = before ? add.filter(x => x.sort > before).length : add.length;
       // 「新」标记只保留最新一批，避免越攒越多
       let kept = 0;
