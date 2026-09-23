@@ -75,6 +75,18 @@ for (let i = 0; i < 30; i++) {
 }
 await sleep(1500);
 
+/* 守卫：页面根本没加载出来时，后面每一条都会失败，而控制台依然是干净的
+   —— 这会产出「43 条 FAIL / 3 条 PASS」这种把真实问题淹掉的假警报。
+   所以先确认页面真的到了，再开始断言。 */
+const cardsLoaded = (await ev("document.querySelectorAll('.card').length")).v;
+if (!cardsLoaded) {
+  console.log('\n✗ 页面没有加载出来（.card 数量为 0），断言未执行。');
+  console.log('  最可能的原因：本地静态服务没起来，或 URL 指向了错误页面。');
+  console.log('  先确认：curl -s -o /dev/null -w "%{http_code}\\n" ' + URL_);
+  console.log('  当前地址：' + (await ev('location.href')).v);
+  ws.close(); chrome.kill(); process.exit(2);
+}
+
 const checks = [];
 const ok = (name, cond, extra = '') => checks.push([cond ? 'PASS' : 'FAIL', name, extra]);
 
@@ -86,15 +98,22 @@ ok('K线状态含源名', ((await ev("document.getElementById('klineState').text
 ok('价差卡 7 张', (await ev("document.querySelectorAll('.spread').length")).v === 7);
 ok('价差有迷你走势', (await ev("document.querySelectorAll('.spread svg').length")).v >= 5);
 ok('血统行有内容', ((await ev("document.getElementById('prov').textContent")).v || '').includes('序列'));
-ok('一句话总结已渲染', ((await ev("document.getElementById('summary').textContent")).v || '').length > 40);
+ok('简报已结构化（不是一段跑文）',
+   (await ev("document.querySelectorAll('.brief-row').length")).v >= 3 &&
+   (await ev("document.querySelectorAll('.brief-row .chip').length")).v >= 20,
+   (await ev("document.querySelectorAll('.brief-row').length")).v + ' 组 / ' +
+   (await ev("document.querySelectorAll('.brief-row .chip').length")).v + ' 枚');
+ok('简报领句已渲染', ((await ev("document.getElementById('briefLede').textContent")).v || '').length > 12,
+   (await ev("document.getElementById('briefLede').textContent")).v?.slice(0, 40));
+ok('简报有数据来源', ((await ev("document.getElementById('briefSrc').textContent")).v || '').length > 10);
 ok('日历有倒计时', /天|时|分/.test((await ev("document.querySelector('#calTop .vv')?.textContent")||{v:''}).v || ''));
 ok('日历进度条有宽度', ((await ev("document.querySelector('#calBar i')?.style.width")||{v:''}).v || '').match(/^\d/) !== null,
    await ev("document.querySelector('#calBar i')?.style.width"));
 ok('情报流有条目', (await ev("document.querySelectorAll('.ni').length")).v >= 10,
    '实际 ' + (await ev("document.querySelectorAll('.ni').length")).v);
 ok('情报有高亮词', (await ev("document.querySelectorAll('.ni mark').length")).v > 0);
-ok('宏观条有数值', (await ev("document.querySelectorAll('#marquee .mq .v').length")).v >= 5,
-   '实际 ' + (await ev("document.querySelectorAll('#marquee .mq .v').length")).v);
+// 注意：跑马灯的数值来自「全球市场」取数结果，必须等下面那段取数完成后再断言。
+// 原来把它放在这里，会在数据到达前就判 FAIL —— 是断言顺序的 bug，不是产品 bug。
 
 // ---------- 本轮新增：全球市场 ----------
 // 这几项依赖外网。网络抖一下会被误报成「代码坏了」，所以先给一次重试机会，
@@ -126,6 +145,8 @@ ok('指数有迷你趋势', (await ev("document.querySelectorAll('#world .mtile 
    '实际 ' + (await ev("document.querySelectorAll('#world .mtile svg').length")).v);
 ok('跑马灯含美元指数', ((await ev("document.getElementById('marquee').textContent")).v || '').includes('美元指数'));
 ok('跑马灯含美债10年', ((await ev("document.getElementById('marquee').textContent")).v || '').includes('美债10年'));
+ok('宏观条有数值', (await ev("document.querySelectorAll('#marquee .mq .v').length")).v >= 5,
+   '实际 ' + (await ev("document.querySelectorAll('#marquee .mq .v').length")).v);
 
 // ---------- 在线复现的仓单 ----------
 ok('仓单分组已渲染', ((await ev("document.getElementById('world').textContent")).v || '').includes('仓单'));
@@ -161,21 +182,95 @@ if (aiCode === 200) {
 ok('日历过期守卫为空（数据未过期）',
    ((await ev("document.getElementById('calWarn').textContent")).v || '') === '');
 
-// ---------- 本轮新增：黑金主题（暖金强调 + 中性近黑面） ----------
-const pillBg = (await ev(`getComputedStyle(document.querySelector('#symTabs button[aria-pressed=true]')).backgroundColor`)).v;
-ok('选中态是金调胶囊（不再是蓝底）', /rgba?\(\s*224,\s*169,\s*74/.test(pillBg || ''), pillBg);
-const accent = (await ev("getComputedStyle(document.documentElement).getPropertyValue('--ic').trim()")).v;
-ok('强调色变量为暖金 #e0a94a', accent === '#e0a94a', accent);
+// ---------- 设计系统 v2：帝国蓝信号层 + 零遗留色 ----------
+// 这里曾经断言的是「黑金主题」（暖金 #e0a94a / 涨红 #db6b61 / 跌绿 #5cb27a /
+// 金品牌 mark）。那套主题后来被整体回退成帝国蓝，但断言没跟着改 ——
+// 于是每次跑都固定有 4 条 FAIL，把一个本来有用的质量闸门变成了噪音源。
+const accent = (await ev("getComputedStyle(document.documentElement).getPropertyValue('--blue').trim()")).v;
+ok('强调色变量为帝国蓝 #0091d4', accent === '#0091d4', accent);
+
 const upDown = (await ev(`[getComputedStyle(document.documentElement).getPropertyValue('--up').trim(),
   getComputedStyle(document.documentElement).getPropertyValue('--down').trim()].join(',')`)).v;
-ok('涨红 #db6b61 / 跌绿 #5cb27a（低饱和）', upDown === '#db6b61,#5cb27a', upDown);
-const brandGold = (await ev("getComputedStyle(document.querySelector('.brand .mark')).backgroundImage")).v;
-ok('品牌标记已上金（黑金主题落地）', /rgb\(224,\s*169,\s*74\)/.test(brandGold || ''), brandGold);
-const oldBlue = (await ev(`[...document.querySelectorAll('*')].some(el=>{
-  const s=getComputedStyle(el);
-  return /10,\\s*132,\\s*255/.test(s.color+s.backgroundColor+s.borderLeftColor+s.borderTopColor);
-})`)).v;
-ok('全站已无旧蓝强调残留', oldBlue === false);
+ok('涨红 #ff5b52 / 跌绿 #22c98d', upDown === '#ff5b52,#22c98d', upDown);
+
+// 选中态现在是渐变底（材料感），颜色落在 background-image 上而不是 background-color，
+// 所以两处都要看 —— 只看 backgroundColor 会拿到 rgba(0,0,0,0) 而误判。
+const pillBg = (await ev(`(() => {
+  const b = document.querySelector('#symTabs button[aria-pressed=true]');
+  const s = getComputedStyle(b);
+  return s.backgroundColor + ' | ' + s.backgroundImage;
+})()`)).v;
+ok('选中态是蓝调胶囊', /rgba?\(\s*0,\s*145,\s*212/.test(pillBg || ''), (pillBg || '').slice(0, 72));
+
+const brandMark = (await ev("getComputedStyle(document.querySelector('.brand .mark')).backgroundImage")).v;
+ok('品牌标记是帝国蓝切面', /rgb\(0,\s*145,\s*212\)/.test(brandMark || ''), brandMark);
+
+/* 旧主题残留扫描 —— 必须同时看 CSS 颜色属性 **和** SVG 的 stroke/fill。
+   上一版只看 CSS，于是漏掉了 app.js 里硬编码的 #0a84ff（仓单迷你走势的描边）：
+   那个颜色在 app.css 里根本不存在，线上却一直在显示，任何检查都看不见。 */
+const legacy = (await ev(`(() => {
+  const cssBad = /10,\\s*132,\\s*255|224,\\s*169,\\s*74|219,\\s*107,\\s*97|92,\\s*178,\\s*122/;
+  for (const el of document.querySelectorAll('*')) {
+    const s = getComputedStyle(el);
+    if (cssBad.test(s.color + s.backgroundColor + s.borderLeftColor + s.borderTopColor)) {
+      return 'css ' + (el.className || el.tagName);
+    }
+  }
+  const svgBad = /0a84ff|e0a94a|db6b61|5cb27a/i;
+  for (const el of document.querySelectorAll('svg *')) {
+    const a = (el.getAttribute('stroke') || '') + ' ' + (el.getAttribute('fill') || '') +
+              ' ' + (el.getAttribute('stop-color') || '');
+    if (svgBad.test(a)) return 'svg ' + el.tagName + ' ' + a;
+  }
+  return false;
+})()`)).v;
+ok('全站已无旧主题残留（含 SVG 属性）', legacy === false, legacy);
+
+// ---------- 设计系统 v2：结构与材料感 ----------
+ok('有唯一的 H1', (await ev("document.querySelectorAll('h1').length")).v === 1,
+   (await ev("document.querySelectorAll('h1').length")).v + ' 个');
+ok('有跳转链接（键盘可达）', (await ev("!!document.querySelector('.skip')")).v === true);
+ok('聚焦图表有 aria-label',
+   /走势/.test((await ev("(document.getElementById('wfocusChart')||{}).getAttribute&&document.getElementById('wfocusChart').getAttribute('aria-label')||''")).v || ''),
+   (await ev("(document.getElementById('wfocusChart')||{}).getAttribute&&document.getElementById('wfocusChart').getAttribute('aria-label')")).v);
+ok('卡片有真实投影（材料感）', (await ev(`(() => {
+  const c = document.querySelector('.card'); if (!c) return false;
+  const sh = getComputedStyle(c).boxShadow;
+  return sh !== 'none' && sh.split('rgba').length >= 3;
+})()`)).v === true);
+ok('卡片有顶部高光边', (await ev(`(() => {
+  const b = getComputedStyle(document.querySelector('.card'), '::before');
+  return b && b.content === '""' && b.height === '1px';
+})()`)).v === true);
+ok('桌面右栏吸附（消灭空场）',
+   (await ev("getComputedStyle(document.querySelector('.col-side')).position")).v === 'sticky',
+   (await ev("getComputedStyle(document.querySelector('.col-side')).position")).v);
+ok('热力格显示名称而不是纯代码', (await ev(`(() => {
+  const t = document.querySelector('#heat .tile');
+  return !!(t && t.querySelector('.tn') && t.querySelector('.tv'));
+})()`)).v === true,
+   (await ev("(() => { const t=document.querySelector('#heat .tile'); return t?t.textContent.trim():'—'; })()")).v);
+ok('热力格有量级条', (await ev(`(() => {
+  const t = document.querySelector('#heat .tile');
+  return !!(t && /^[\\d.]/.test(t.style.getPropertyValue('--mag') || ''));
+})()`)).v === true);
+ok('热力格高度 ≥30px', (await ev(`(() => {
+  const t = document.querySelector('#heat .tile');
+  return t ? Math.round(t.getBoundingClientRect().height) >= 30 : false;
+})()`)).v === true,
+   (await ev("(() => { const t=document.querySelector('#heat .tile'); return t?Math.round(t.getBoundingClientRect().height)+'px':'—'; })()")).v);
+ok('字阶已分档（标题 13px ≠ 正文 12.5px）', (await ev(`(() => {
+  const h = getComputedStyle(document.querySelector('.card-h h2')).fontSize;
+  const b = getComputedStyle(document.body).fontSize;
+  return h !== b;
+})()`)).v === true,
+   (await ev("getComputedStyle(document.querySelector('.card-h h2')).fontSize")).v + ' vs ' +
+   (await ev("getComputedStyle(document.body).fontSize")).v);
+ok('瓦片数值为等宽表格数字', (await ev(`(() => {
+  const v = document.querySelector('.mtile .vv'); if (!v) return false;
+  const s = getComputedStyle(v);
+  return /mono/i.test(s.fontFamily) && /tabular-nums/.test(s.fontVariantNumeric);
+})()`)).v === true);
 
 // 交互 1：点链条里的 MEG 节点 → 切到 EG 主连
 await ev("[...document.querySelectorAll('#chain .node')].find(n=>n.dataset.code==='MEG').click()");

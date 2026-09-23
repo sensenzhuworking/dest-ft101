@@ -18,21 +18,27 @@ const Charts = (() => {
 
   /* 与 assets/app.css 的 token 保持同一套：这里只改色值，不动任何绘图逻辑。
      帝国蓝只做「信号」：聚焦图 MA5 用蓝（聚焦本身就是信号时刻），
-     主力 K 线 MA 同样蓝/灰各司其职；红绿只报涨跌，别的一律不沾。 */
-  const UP = '#f0554e';       // 涨 = 红（中国习惯）· 与 app.css --up 同源
-  const DOWN = '#27c08a';     // 跌 = 绿 · 与 app.css --down 同源
-  const ACCENT = '#0091d4';   // Pool Blue —— 主力 MA5 / 聚焦图 MA5（对应 app.css --ic）
+     主力 K 线 MA 同样蓝/灰各司其职；红绿只报涨跌，别的一律不沾。
+
+     ⚠ 这里每一个常量都必须在 app.css 里有同名 token。历史上出现过
+     「app.js 里硬编码了一个 app.css 根本没有的旧蓝色（#0a84ff）画仓单走势」，
+     而自检断言只看 CSS 颜色属性、看不到 SVG stroke —— 于是它长期在线上
+     以另一种蓝显示，且没有任何检查能发现。所以 SEAGLASS 现在对外导出，
+     调用方一律从这里取，不再自己写色值。 */
+  const UP = '#ff5b52';       // 涨 = 红（中国习惯）· 与 app.css --up 同源
+  const DOWN = '#22c98d';     // 跌 = 绿 · 与 app.css --down 同源
+  const ACCENT = '#0091d4';   // Pool Blue —— 主力 MA5 / 聚焦图 MA5（对应 app.css --blue）
   const IC = ACCENT;          // 主力 K 线 MA5
   const GREY = '#9d9d9d';     // Cool Grey —— MA20 / 聚焦图 MA10
-  const SEAGLASS = '#009cbc'; // Seaglass —— 仓单折线等第二义场景
-  const FG2 = '#8a93a5';      // 坐标轴文字 —— 安静的冷灰
-  const GRID = 'rgba(255,255,255,.045)';   // 网格极淡：有刻度感但不抢走势
-  const BORDER = 'rgba(255,255,255,.09)';
+  const SEAGLASS = '#00a8c8'; // Seaglass —— 仓单折线等第二义场景（对应 app.css --seaglass）
+  const FG2 = '#8791a3';      // 坐标轴文字 —— 与 app.css --t3 同源
+  const GRID = 'rgba(255,255,255,.042)';   // 网格极淡：有刻度感但不抢走势
+  const BORDER = 'rgba(255,255,255,.10)';
   /* 十字光标：垂直=蓝细点线，水平=蓝虚线端到端。
      蓝是「当前指针」的信号，不与涨跌色混淆；深海军蓝标签压得住白字。 */
-  const X_VERT = 'rgba(0,145,212,.55)';
-  const X_HORZ = 'rgba(0,145,212,.32)';
-  const X_LABEL = '#0a2a42';
+  const X_VERT = 'rgba(0,145,212,.60)';
+  const X_HORZ = 'rgba(0,145,212,.34)';
+  const X_LABEL = '#062033';
 
   const MARGINS = { top: .08, bottom: .26 };
   /** 触屏设备：手指在右侧刻度上竖滑会被当成「拖价格轴」，
@@ -62,6 +68,18 @@ const Charts = (() => {
     const d = new Date(t * 1000);
     return d.getFullYear() + '-' + pad(d.getMonth() + 1) + '-' + pad(d.getDate()) +
            ' ' + pad(d.getHours()) + ':' + pad(d.getMinutes());
+  }
+
+  /** 价格轴刻度：去掉无意义的尾随零。
+   *  6120.00 → 6120 · 6120.50 → 6120.5 · 6.7459 → 6.7459 · 100.867 → 100.867
+   *  数字本身没变，但轴上一排「7200.00 / 6800.00 / 6400.00」会显得廉价，
+   *  而且白占两个字符宽 —— 这是「看起来专业」成本最低的一处修正。 */
+  function priceText (p) {
+    if (!isFinite(p)) return '';
+    const a = Math.abs(p);
+    const dp = a >= 1000 ? 0 : a >= 100 ? 1 : a >= 1 ? 2 : 4;
+    const s = p.toFixed(dp);
+    return dp === 0 ? s : s.replace(/\.?0+$/, '') || s;
   }
 
   /* ---------------- 实例管理 ---------------- */
@@ -98,7 +116,7 @@ const Charts = (() => {
         lockVisibleTimeRangeOnResize: true,
         tickMarkFormatter: tickFormatter
       },
-      localization: { locale: 'zh-CN', timeFormatter },
+      localization: { locale: 'zh-CN', timeFormatter, priceFormatter: priceText },
       crosshair: {
         mode: LightweightCharts.CrosshairMode.Normal,
         vertLine: { color: X_VERT, width: 1, style: 1, labelBackgroundColor: X_LABEL },
@@ -258,7 +276,7 @@ const Charts = (() => {
     periods.forEach((n, i) => {
       if (!it.series[i]) {
         it.series[i] = it.chart.addLineSeries({
-          color: colors[i] || GREY, lineWidth: 1.6,
+          color: colors[i] || GREY, lineWidth: 1.8,
           priceLineVisible: false, lastValueVisible: false, crosshairMarkerVisible: false
         });
       }
@@ -272,7 +290,8 @@ const Charts = (() => {
     it.vol.setData(data.map(b => ({
       time: b.time,
       value: b.volume || 0,
-      color: b.close >= b.open ? 'rgba(240,85,78,.32)' : 'rgba(45,190,138,.30)'
+      // 与 app.css 的 --up / --down 同源，低饱和压在蜡烛之下不抢戏
+      color: b.close >= b.open ? 'rgba(255,91,82,.34)' : 'rgba(34,201,141,.30)'
     })));
     it.lastClose = data.length > 1 ? data[data.length - 2].close : null;
 
@@ -293,7 +312,7 @@ const Charts = (() => {
       it.line = it.chart.addAreaSeries({
         lineColor: o.color || IC,
         lineWidth: 2,
-        topColor: hexA(o.color || IC, .22),
+        topColor: hexA(o.color || IC, .30),
         bottomColor: hexA(o.color || IC, .01),
         priceLineVisible: false,
         lastValueVisible: true
@@ -303,7 +322,7 @@ const Charts = (() => {
     it.unit = o.unit || '';
     it.line.applyOptions({
       lineColor: o.color || IC,
-      topColor: hexA(o.color || IC, .22),
+      topColor: hexA(o.color || IC, .30),
       bottomColor: hexA(o.color || IC, .01),
       priceFormat: { type: 'price', precision: it.digits, minMove: Math.pow(10, -it.digits) }
     });
@@ -339,7 +358,7 @@ const Charts = (() => {
    *   同一张瓦片内保持一个颜色才不会让人读错。不传则按首尾方向。
    */
   function spark (values, o = {}) {
-    const w = o.w || 120, h = o.h || 26, padY = 3;
+    const w = o.w || 120, h = o.h || 26, padY = 3.5;
     const v = values.filter(x => x !== null && isFinite(x));
     if (v.length < 2) return '';
     const min = Math.min(...v), max = Math.max(...v);
@@ -353,14 +372,24 @@ const Charts = (() => {
     const rising = v[v.length - 1] >= v[0];
     const color = o.color || (rising ? UP : DOWN);
     const base = py(min).toFixed(1);
+    const lastX = px(v.length - 1).toFixed(1), lastY = py(v[v.length - 1]).toFixed(1);
+    const uid = 'sg' + (spark._n = (spark._n || 0) + 1);
 
+    /* 三层做出材料感：渐变面积 → 主线 → 端点光点。
+       线宽 1.6 + 圆头圆角；面积用纵向渐变而不是平涂 10%，
+       平涂会让 31 张瓦片看起来像同一个灰块。 */
     return '<svg viewBox="0 0 ' + w + ' ' + h + '" width="100%" height="' + h + '" ' +
            'preserveAspectRatio="none" role="img" aria-label="迷你走势">' +
-           '<path d="' + d + 'L' + px(v.length - 1).toFixed(1) + ' ' + base +
-           'L' + px(0).toFixed(1) + ' ' + base + 'Z" fill="' + color + '" opacity="0.10"/>' +
-           '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.3"/>' +
-           '<circle cx="' + px(v.length - 1).toFixed(1) + '" cy="' + py(v[v.length - 1]).toFixed(1) +
-           '" r="1.8" fill="' + color + '"/></svg>';
+           '<defs><linearGradient id="' + uid + '" x1="0" y1="0" x2="0" y2="1">' +
+             '<stop offset="0%" stop-color="' + color + '" stop-opacity=".26"/>' +
+             '<stop offset="100%" stop-color="' + color + '" stop-opacity="0"/>' +
+           '</linearGradient></defs>' +
+           '<path d="' + d + 'L' + lastX + ' ' + base + 'L' + px(0).toFixed(1) + ' ' + base +
+             'Z" fill="url(#' + uid + ')"/>' +
+           '<path d="' + d + '" fill="none" stroke="' + color + '" stroke-width="1.6" ' +
+             'stroke-linecap="round" stroke-linejoin="round"/>' +
+           '<circle cx="' + lastX + '" cy="' + lastY + '" r="3" fill="' + color + '" opacity=".22"/>' +
+           '<circle cx="' + lastX + '" cy="' + lastY + '" r="1.7" fill="' + color + '"/></svg>';
   }
 
   /** 涨跌 → 十六进制色，供外部对齐瓦片配色 */
@@ -379,5 +408,11 @@ const Charts = (() => {
   }
   window.addEventListener('resize', () => { clearTimeout(resize._t); resize._t = setTimeout(resize, 120); });
 
-  return { draw, drawLine, resize, spark, colorFor, ma, stats, dispose, esc, COARSE, ACCENT, GREY };
+  /* 调色板对外导出：调用方一律从这里取色，不要自己写十六进制。
+     （历史事故：app.js 里硬编码了一个 app.css 里不存在的旧蓝 #0a84ff，
+       于是仓单走势在瓦片里是一种蓝、在聚焦图里是另一种蓝，长期无人发现。） */
+  return {
+    draw, drawLine, resize, spark, colorFor, ma, stats, dispose, prune, esc, COARSE,
+    ACCENT, GREY, SEAGLASS, UP, DOWN, FG2
+  };
 })();

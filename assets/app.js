@@ -16,7 +16,8 @@
     bars: [],
     loading: false,
     world: null,
-    focus: null,          // 全球市场聚焦中的瓦片 id（显示在右栏固定 Inspector）
+    worldShape: '',       // 上次渲染的面板形状签名（同签名 = 就地补值，不重建 DOM）
+    focus: null,          // 全球市场聚焦中的瓦片 id
     focusCache: {},       // 聚焦序列缓存：id → {kind, bars|points, src}
     open: {},             // 全球市场分组展开态：groupId → bool（默认见 WORLD_EXPAND_HINT）
     macro: { lastRun: 0, dayKey: '', todayCount: 0, busy: false },  // 宏观速览节流态
@@ -223,10 +224,11 @@
     const box = $('world');
 
     if (!res.groups.length) {
-      box.innerHTML = '<p class="state" style="border:0;margin:0">' +
+      box.innerHTML = '<div class="state-error" style="margin:0">' +
         '全球行情源暂时都不可达。本地产的 K 线、加工费、热力图不受影响，' +
-        '点右上角「刷新」重试。</p>';
+        '点右上角「刷新」重试。</div>';
       $('worldNote').textContent = '源不可达';
+      S.worldShape = '';
       if (S.focus) unfocusWorld();
       renderMarquee([]);
       renderFresh();
@@ -236,9 +238,15 @@
     // 聚焦的那一项在新数据里没了（源挂了），就自动退出聚焦，否则面板会卡在空图上
     if (S.focus && !worldFlat()[S.focus]) unfocusWorld();
 
-    // #world 整组重画不会拆聚焦宿主（它在 #world 外面，只被移动、不被重建）
-    paintWorld();
-    if (S.focus) updateFocusValues();
+    /* 形状没变 → 就地补值（保住 hover / 焦点 / 滚动位置，且不重解析 SVG）；
+       形状变了 → 才重建。60 秒的例行刷新几乎总是走第一条路。 */
+    const shape = worldShape(res);
+    if (shape === S.worldShape && patchWorld()) {
+      if (S.focus) updateFocusValues();
+    } else {
+      paintWorld();
+    }
+    S.worldShape = shape;
 
     $('worldNote').innerHTML = '实时 ' + res.groups.flatMap(g => g.items).filter(i => i.live).length +
       ' / 共 ' + res.groups.flatMap(g => g.items).length + ' 项 · 更新于 ' +
@@ -249,10 +257,20 @@
     renderFresh();
   }
 
+  /** 取数期间的骨架瓦片：占住高度，避免 320px → 949px 的滚动位置跳动 */
+  function worldSkeleton () {
+    const box = $('world');
+    if (!box || box.dataset.painted) return;
+    box.innerHTML = '<div class="skeleton">' + '<i></i>'.repeat(8) + '</div>';
+  }
+
   function tileHTML (it) {
-    // 仓单用中性蓝画趋势：红涨绿绿在这条线上没有意义（仓单下降不等于价格下跌），
+    // 仓单用中性 Seaglass 画趋势：红涨绿跌在这条线上没有意义（仓单下降不等于价格下跌），
     // 沿用涨跌色会让人把「仓单降」读成「看空」。
-    const sparkColor = it.srcId === 'em_stock' ? '#0a84ff' : Charts.colorFor(it.pct);
+    // ⚠ 必须从 Charts 取色。这里曾经硬编码 '#0a84ff'（旧主题的蓝，app.css 里根本没有这个值），
+    //   结果是同一个仓单序列在瓦片里是电光蓝、在聚焦图里是 Seaglass —— 而自检只看 CSS
+    //   颜色属性、看不到 SVG stroke，所以它一直没被任何检查发现。
+    const sparkColor = it.srcId === 'em_stock' ? Charts.SEAGLASS : Charts.colorFor(it.pct);
     const spark = it.spark && it.spark.length > 3
       ? Charts.spark(it.spark, { w: 130, h: 24, color: sparkColor })
       : '';
@@ -312,7 +330,53 @@
     // 重写 innerHTML 前先把聚焦宿主挪出 #world，否则它会连同旧分组一起被销毁
     if (host && host.parentElement === box) box.insertAdjacentElement('afterend', host);
     box.innerHTML = S.world.groups.map(groupHTML).join('');
+    box.dataset.painted = '1';
     positionFocusHost();
+  }
+
+  /** 面板的「形状」签名：分组 id + 每组的项 id。
+   *  形状没变 = 可以就地补值；形状变了（某个源挂了、某项消失）才值得重建 DOM。 */
+  function worldShape (res) {
+    if (!res || !res.groups) return '';
+    return res.groups.map(g => g.id + ':' + g.items.map(i => i.id).join(',')).join('|');
+  }
+
+  /** 就地补值 —— 每分钟的例行刷新走这条路，不再重建 DOM。
+   *  为什么必须这么做：
+   *    1. 全量 innerHTML 会丢掉 hover、键盘焦点、文本选择与滚动位置 ——
+   *       键盘用户正在浏览时被 60 秒定时器把焦点抽走，是真实的无障碍缺陷。
+   *    2. 31 张瓦片的 SVG 迷你走势会被重新解析一次，纯属白做。
+   *    3. [data-f-v] / [data-f-p] / [data-f-t] 这几个锚点本来就是为了就地补值而
+   *       存在的，但此前没有任何代码用过它们 —— 等于白留。
+   *  返回 true 表示全部命中，可以安全跳过重建。 */
+  function patchWorld () {
+    const box = $('world');
+    if (!box || !S.world) return false;
+    const flat = worldFlat();
+    let hit = 0;
+    for (const tile of box.querySelectorAll('.mtile[data-wid]')) {
+      const it = flat[tile.dataset.wid];
+      if (!it) return false;                       // 有项消失 → 交给重建
+      const v = tile.querySelector('[data-f-v]');
+      const p = tile.querySelector('[data-f-p]');
+      const t = tile.querySelector('[data-f-t]');
+      if (v) v.textContent = valText(it);
+      if (p) { p.textContent = chgText(it); p.className = 'pc ' + chgCls(it); }
+      if (t) t.textContent = footText(it);
+      // 左侧方向色条也要跟着走，否则价格变了颜色还停在上一轮
+      const dir = chgCls(it);
+      tile.classList.remove('u', 'd');
+      if (dir !== 'flat') tile.classList.add(dir);
+      // 收起的分组只显示一行摘要，计数会随涨跌翻转
+      const grp = tile.closest('.mgroup');
+      if (grp && grp.dataset.open === '0') {
+        const cnt = grp.querySelector('.g-count');
+        const g = S.world.groups.find(x => x.id === grp.id.replace(/^grp-/, ''));
+        if (cnt && g) cnt.textContent = groupSummary(g);
+      }
+      hit++;
+    }
+    return hit > 0 && hit === Object.keys(flat).length;
   }
 
   /** 把聚焦宿主移动到聚焦项所在分组的后面。
@@ -416,9 +480,9 @@
       state.innerHTML = '上图 <b>' + (it.label) + '</b> 日线 · 红涨绿跌 · ' +
         '均线 MA5（蓝）/ MA10（灰）· 双击图表复位缩放 · 点「收起」或再点一次瓦片收起';
     } else if (s.kind === 'line') {
-      // 仓单用中性青：红涨绿跌在仓单曲线上没有意义（仓单降 ≠ 看空），
-      // 沿用涨跌色会让人把库存变化读成价格方向。
-      const lineColor = it.srcId === 'em_stock' ? '#009cbc' : Charts.colorFor(it.pct);
+      // 仓单用中性 Seaglass：红涨绿跌在仓单曲线上没有意义（仓单降 ≠ 看空），
+      // 沿用涨跌色会让人把库存变化读成价格方向。与瓦片迷你走势同一支色。
+      const lineColor = it.srcId === 'em_stock' ? Charts.SEAGLASS : Charts.colorFor(it.pct);
       requestAnimationFrame(() => {
         if (S.focus !== id) return;
         Charts.drawLine(host, s.points, {
@@ -482,8 +546,29 @@
      5. 底部：热力图 + 血统 + 新鲜度 + 一句话总结 + AI
      ====================================================================== */
 
+  /** 热力格上的短名：把与代码重复的部分和族群前缀去掉。
+   *  原来只印代码（TA / MEG / POY），全名只藏在 title 里 —— 触屏上根本没有 title。
+   *  这里把名字真正显示出来，同时不至于让 13 个格子撑成两屏。
+   *  重名（SC原油 与 WTI原油 都会简化成「原油」）一律退回代码，宁可短也不能歧义。 */
+  function shortNames (instruments) {
+    const raw = new Map();
+    for (const i of instruments) {
+      const code = i.code, full = String(i.name_cn || code);
+      // 先去掉内嵌的代码，再去掉「涤纶/聚酯」这类族群前缀
+      const s = full.replace(new RegExp(code, 'gi'), '').replace(/^(涤纶|聚酯)/, '').trim();
+      raw.set(code, s ? (s.length > 4 ? (full.length <= 5 ? full : code) : s)
+                      : code);
+    }
+    const count = {};
+    for (const v of raw.values()) count[v] = (count[v] || 0) + 1;
+    const out = {};
+    for (const [code, v] of raw) out[code] = count[v] > 1 ? code : v;
+    return out;
+  }
+
   function renderHeat () {
     const rows = [];
+    const shortOf = shortNames(S.desk.instruments || []);
     for (const inst of S.desk.instruments) {
       const code = inst.code;
       const fut = latestOf(code, 'futures');
@@ -493,19 +578,27 @@
       if (!pick) continue;
       const prov = S.desk.provenance[code + '|' + kind] || {};
       rows.push({
-        code, name: inst.name_cn, pct: pick.chg_pct, value: pick.value, unit: inst.unit,
+        code, name: inst.name_cn, short: shortOf[code] || code,
+        pct: pick.chg_pct, value: pick.value, unit: inst.unit,
         stale: /STALE/.test(prov.quality_flag || ''), kind,
         flag: prov.quality_flag || '', n: prov.n_sources || 1
       });
     }
     rows.sort((a, b) => (b.pct == null ? -999 : b.pct) - (a.pct == null ? -999 : a.pct));
+
+    // 量级条：|涨跌幅| 相对本屏最大值，给格子一个可读的强弱刻度
+    const maxAbs = Math.max(0.1, ...rows.map(r => Math.abs(r.pct || 0)));
+
     $('heat').innerHTML = '<span class="lb">涨跌热力</span>' + rows.map(r => {
       const tip = r.name + ' · ' + (r.kind === 'futures' ? '期货主力' : '现货') +
         ' ' + fmtNum(r.value, 1) + ' ' + (r.unit || '') + ' · ' + r.n + ' 个来源' +
         (r.flag ? ' · ' + r.flag : '') + (r.stale ? ' · 数据可能滞后' : '');
+      const mag = Math.min(1, Math.abs(r.pct || 0) / maxAbs);
       return '<button class="tile ' + cls(r.pct) + (r.stale ? ' stale' : '') + '" type="button" ' +
-        'data-code="' + r.code + '" title="' + esc(tip) + '">' +
-        esc(r.code) + ' ' + (r.pct == null ? '—' : fmtPct(r.pct, 1)) + '</button>';
+        'data-code="' + r.code + '" style="--mag:' + mag.toFixed(2) + '" ' +
+        'title="' + esc(tip) + '">' +
+        '<span class="tn">' + esc(r.short) + '</span>' +
+        '<span class="tv">' + (r.pct == null ? '—' : fmtPct(r.pct, 1)) + '</span></button>';
     }).join('');
   }
 
@@ -553,14 +646,97 @@
     $('fresh').innerHTML = parts.join('');
   }
 
-  function renderSummary () {
-    const s = S.desk.summary;
-    if (!s) { $('summary').textContent = '本地数据库里还没有一句话总结。'; return; }
-    const txt = s.summary_text || '';
-    const m = txt.match(/^(\d{4}-\d{2}-\d{2} 聚酯链收盘；[^；]+；)/);
-    $('summary').innerHTML = m
-      ? '<b>' + esc(m[1]) + '</b>' + esc(txt.slice(m[1].length))
-      : esc(txt);
+  /* ── 一句话总结 → 结构化简报 ────────────────────────────────────────────
+     起因：summary_text 是一段 320 字的跑文，把 30 多个数字串在一行里，
+     挂着「总结」的名字却完全没法扫读 —— 这是全页信息设计最差的一块。
+
+     数据本来就在 desk.json 的结构化字段里（latest / spreads / instruments），
+     所以简报直接由结构化数据生成；正文只用来取「领句」和「数据来源」两段，
+     中间那三段流水账由芯片取代。领句和来源缺失时退回原文，不硬解析。 */
+  function renderBrief () {
+    const grid = $('briefGrid');
+    if (!grid) return;
+    const d = S.desk;
+    const txt = (d.summary && d.summary.summary_text) || '';
+    const clauses = txt.split('；');
+
+    const nameOf = code => {
+      const i = (d.instruments || []).find(x => x.code === code);
+      return (i && i.name_cn) || code;
+    };
+    const rank = kind => (d.instruments || [])
+      .map(i => ({ i, l: d.latest[i.code] && d.latest[i.code][kind] }))
+      .filter(x => x.l)
+      .sort((a, b) => (b.l.chg_pct == null ? -999 : b.l.chg_pct) -
+                      (a.l.chg_pct == null ? -999 : a.l.chg_pct));
+
+    const digitsFor = v => (Math.abs(v) >= 1000 ? 0 : Math.abs(v) >= 100 ? 1 : 2);
+    const chip = (name, value, chg, digits, pctText, tip) => {
+      const dir = cls(chg);
+      return '<span class="chip ' + dir + '"' + (tip ? ' title="' + esc(tip) + '"' : '') + '>' +
+        '<span class="cn">' + esc(name) + '</span>' +
+        '<span class="cv">' + esc(fmtNum(value, digits)) + '</span>' +
+        '<span class="cp ' + dir + '">' + esc(pctText) + '</span></span>';
+    };
+    const unitTip = (name, v, unit, asOf, src) =>
+      name + ' ' + fmtNum(v, 2) + ' ' + (unit || '') +
+      (asOf ? ' · 截至 ' + asOf : '') + (src ? ' · ' + src : '');
+
+    const rows = [];
+
+    const fut = rank('futures');
+    if (fut.length) {
+      rows.push(['期货主力', fut.map(x =>
+        chip(nameOf(x.i.code), x.l.value, x.l.chg_pct, digitsFor(x.l.value),
+             fmtPct(x.l.chg_pct),
+             unitTip(nameOf(x.i.code), x.l.value, x.i.unit, x.l.date, '期货主力'))).join('')]);
+    }
+
+    const spot = rank('spot');
+    if (spot.length) {
+      rows.push(['现货', spot.map(x =>
+        chip(nameOf(x.i.code), x.l.value, x.l.chg_pct, digitsFor(x.l.value),
+             fmtPct(x.l.chg_pct),
+             unitTip(nameOf(x.i.code), x.l.value, x.i.unit, x.l.date, '现货'))).join('')]);
+    }
+
+    const sp = SPREAD_PICK.filter(k => d.spreads[k]).map(k => {
+      const s = d.spreads[k], l = s.latest || {};
+      return chip(s.label, l.value, l.chg, 1, fmtSigned(l.chg, 1),
+                  s.label + ' ' + fmtNum(l.value, 1) + ' ' + (s.unit || '') +
+                  (s.formula ? ' · ' + s.formula : '') +
+                  (l.date ? ' · 截至 ' + l.date : ''));
+    }).join('');
+    if (sp) rows.push(['加工费 / 价差', sp]);
+
+    grid.innerHTML = rows.map(([k, chips]) =>
+      '<div class="brief-row"><span class="k">' + esc(k) + '</span>' +
+      '<span class="chips">' + chips + '</span></div>').join('');
+
+    // 日期 + 领句
+    const dateEl = $('briefDate'), ledeEl = $('briefLede');
+    if (dateEl) dateEl.textContent = (d.summary && d.summary.trade_date) || d.as_of || '—';
+    if (ledeEl) {
+      let lede = clauses[1] || '';
+      if (lede) {
+        ledeEl.innerHTML = esc(lede)
+          .replace(/(\d+)\s*涨/, '<b class="up">$1涨</b>')
+          .replace(/(\d+)\s*跌/, '<b class="down">$1跌</b>')
+          .replace(/\(([+-]?[\d.]+%)\)/g, (m, p1) =>
+            '(<b class="' + (p1.charAt(0) === '-' ? 'down' : 'up') + '">' + p1 + '</b>)');
+      } else {
+        // 模板变了就整段退回，不假装还能解析
+        ledeEl.textContent = txt.slice(0, 160) || '本地数据库里还没有一句话总结。';
+      }
+    }
+
+    // 来源：取「数据来源」那一段
+    const srcEl = $('briefSrc');
+    if (srcEl) {
+      const s = clauses.find(c => c.indexOf('数据来源') === 0) || '';
+      srcEl.textContent = s || ('数据库 ' + (d.db || '—') + ' · 生成 ' +
+        String(d.generated_at || '').slice(0, 16).replace('T', ' '));
+    }
   }
 
   /** AI 复盘：读静态 data/ai_digest.json。前端不放任何密钥。 */
@@ -587,7 +763,7 @@
         '<p><b>' + esc(x.code) + '</b> ' + mdLite(x.text) + '</p>').join('');
     }
     if (Array.isArray(d.warnings) && d.warnings.length) {
-      html += '<p class="dim2">数据提示：' + esc(d.warnings.join('；')) + '</p>';
+      html += '<p class="ai-warn">数据提示：' + esc(d.warnings.join('；')) + '</p>';
     }
     box.innerHTML = html;
   }
@@ -1248,7 +1424,8 @@
 
     S.desk = await Desk.loadDesk();
     if (!S.desk) {
-      $('summary').innerHTML = '<b>读不到 data/desk.json。</b>先运行 ' +
+      const lede = $('briefLede');
+      if (lede) lede.innerHTML = '<b>读不到 data/desk.json。</b>先运行 ' +
         '<span class="num">python3 tools/export_desk_json.py</span> 生成它。';
       $('klineState').innerHTML = '本地数据库未就绪，K 线暂不加载。';
       await renderWorld();
@@ -1257,12 +1434,15 @@
 
     $('brandSub').textContent = '数据截止 ' + (S.desk.as_of || '—');
     renderSymTabs(); renderPerTabs();
-    renderChain(); renderSpreads(); renderHeat(); renderProv(); renderSummary();
+    renderChain(); renderSpreads(); renderHeat(); renderProv(); renderBrief();
     renderCalendar();
 
     S.ai = await Desk.loadAiDigest();
     renderAi();
 
+    // 先放骨架再取数：全球市场卡从 320px 长到 949px，
+    // 没有占位的话首次加载会把滚动位置顶下去（CLS）
+    worldSkeleton();
     await Promise.all([renderWorld(), loadKline()]);
 
     if (!boot._timers) { boot._timers = true; startTimers(); }
@@ -1274,6 +1454,9 @@
 
   /** 开场读地址栏锚点，把常用视图存成书签：#PX、#PX/W、#w=sh000905、#term */
   function applyHash () {
+    // desk.json 没加载成功时 boot() 会提前返回，但 .then(applyHash) 照样会跑。
+    // 少了这道判断，恰恰在「设计上要能扛住」的那个失败场景里会抛 TypeError。
+    if (!S.desk) return;
     const h = decodeURIComponent(location.hash.replace(/^#/, '')).trim();
     if (!h) return;
     if (/^w=/i.test(h)) {

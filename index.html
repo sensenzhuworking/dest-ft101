@@ -18,25 +18,27 @@
 </head>
 <body>
 
+<a class="skip" href="#main">跳到主内容</a>
+
 <p class="sr-only" id="live" role="status" aria-live="polite"></p>
 
 <!-- ======================= 顶栏 ======================= -->
 <header class="topbar">
-  <div class="brand">
-    <span class="mark"></span>
+  <h1 class="brand">
+    <span class="mark" aria-hidden="true"></span>
     <b>聚酯链驾驶舱</b>
-    <span id="brandSub">自用</span>
-  </div>
+  </h1>
   <div class="marquee" id="marquee" role="group" aria-label="全球宏观与上游报价">
     <span class="mq"><span class="k">加载中</span></span>
   </div>
   <div class="topmeta">
+    <span id="brandSub" class="asof">—</span>
     <span id="clock" class="num">--:--:--</span>
     <button class="btn" id="btnRefresh" type="button" title="重新拉取全部行情与新闻">刷新</button>
   </div>
 </header>
 
-<main class="grid">
+<main class="grid" id="main">
 
   <!-- ======================= 左栏 ======================= -->
   <div class="col-main">
@@ -110,7 +112,8 @@
           </div>
           <div class="wfocus-chart">
             <div class="ohlc" id="wfocusOhlc" aria-hidden="true"></div>
-            <div class="wchart" id="wfocusChart" role="img"></div>
+            <div class="wchart" id="wfocusChart" role="img"
+                 aria-label="聚焦品种的历史走势图"></div>
           </div>
           <div class="wfocus-meta" id="wfocusMeta">—</div>
           <p class="state wfocus-state" id="wfocusState">正在取历史序列…</p>
@@ -176,7 +179,17 @@
       <span>部署没生效就按 Command+Shift+R 强刷</span>
     </div>
   </details>
-  <p class="summary" id="summary">正在读取本地数据库…</p>
+
+  <!-- 简报：由 desk.json 的结构化字段生成，不是把一段 320 字的跑文塞进来 -->
+  <section class="brief" aria-labelledby="briefDate">
+    <div class="brief-h">
+      <h2 class="date" id="briefDate">—</h2>
+      <p class="lede" id="briefLede">正在读取本地数据库…</p>
+    </div>
+    <div class="brief-grid" id="briefGrid"></div>
+    <p class="brief-src" id="briefSrc"></p>
+  </section>
+
   <div class="ai" id="ai" hidden></div>
 </footer>
 
