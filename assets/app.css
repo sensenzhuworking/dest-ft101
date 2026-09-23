@@ -315,13 +315,14 @@ button, [role="button"] { touch-action: manipulation; }
 /* 全球市场数据到达前预留高度，避免滚动位置跳（CLS） */
 #world { min-height: 320px; }
 
-/* 骨架瓦片：静态占位，不做无限 shimmer（省掉一条常驻动画） */
+/* 骨架瓦片：静态占位，不做无限 shimmer（省掉一条常驻动画）。
+   高度必须与真瓦片一致，否则取数完成时会跳一下。 */
 .skeleton {
   display: grid; grid-template-columns: repeat(4, minmax(0, 1fr));
   gap: var(--sp-2);
 }
 .skeleton i {
-  display: block; height: 96px; border-radius: var(--r-sm);
+  display: block; height: 108px; border-radius: var(--r-sm);
   background: var(--ink-2);
 }
 
@@ -586,20 +587,9 @@ button, [role="button"] { touch-action: manipulation; }
   font-weight: 400;
 }
 
-.mtiles.compact { display: flex; flex-wrap: wrap; gap: 6px; }
-.mtile.c {
-  display: inline-flex; align-items: baseline; gap: 6px; width: auto;
-  min-height: 32px; padding: 5px 10px; border-left-width: 2px;
-}
-.mtile.c .c-nm { font-size: var(--fs-body); color: var(--t2); white-space: nowrap; }
-.mtile.c .c-vv {
-  font-family: var(--mono); font-variant-numeric: tabular-nums;
-  font-size: var(--fs-val); color: var(--t1); white-space: nowrap;
-}
-.mtile.c .c-pc {
-  font-family: var(--mono); font-variant-numeric: tabular-nums;
-  font-size: var(--fs-meta); white-space: nowrap;
-}
+/* 注：上一版还有 `.mtiles.compact` / `.mtile.c`（点开瓦片时把其余瓦片缩成小格）。
+   那个交互已经换成卡内就地面板，JS 里再也没有地方加 compact 类，所以整套规则
+   已删除。改造清单里把它列为「不能动的类名契约」，那条也已经过期 —— 见清单文档。 */
 
 /* ==========================================================================
    就地放大面板（稳定宿主 #wfocusHost）

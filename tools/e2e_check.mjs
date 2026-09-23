@@ -154,6 +154,25 @@ ok('仓单瓦片有 4 个', (await ev(`(()=>{const g=[...document.querySelectorA
    .find(x=>x.textContent.includes('仓单'));return g?g.querySelectorAll('.mtile').length:0})()`)).v === 4);
 ok('仓单单位是万吨', ((await ev("document.getElementById('world').textContent")).v || '').includes('万吨'));
 
+/* 三种「没有」必须看起来不同，否则都会被读成「还没加载完」：
+     源不可达   → 红底 .state-error
+     没有历史序列 → 虚线框 .state-dashed
+   这里验第二种：点开一个只有当日快照、没有历史序列的项（美债/VIX 这类 CNBC 项）。 */
+const noHist = (await ev(`(async () => {
+  const t = [...document.querySelectorAll('#world .mtile')]
+    .find(x => x.dataset.wid === 'US10Y' || x.dataset.wid === '.VIX');
+  if (!t) return { err: '找不到无历史序列的项' };
+  t.click();
+  await new Promise(r => setTimeout(r, 3000));
+  const st = document.getElementById('wfocusState');
+  const res = { cls: st ? st.className : '', text: st ? st.textContent.slice(0, 24) : '' };
+  t.click();                                   // 收起，别影响后面的断言
+  await new Promise(r => setTimeout(r, 600));
+  return res;
+})()`)).v;
+ok('无历史序列的项显示虚线框（不是灰字）',
+   /state-dashed/.test((noHist && noHist.cls) || ''), (noHist && noHist.cls) || JSON.stringify(noHist));
+
 // ---------- 1 分钟线 ----------
 ok('周期按钮含 1分', ((await ev("document.getElementById('perTabs').textContent")).v || '').includes('1分'));
 

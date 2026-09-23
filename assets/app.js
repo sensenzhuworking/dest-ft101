@@ -504,6 +504,9 @@
     // 用户可能在取数期间又点了别的
     if (S.focus !== id) return;
 
+    // 每次重画先把状态行的形态复位（上一项可能是虚线框）
+    state.className = 'state wfocus-state';
+
     if (s.kind === 'bars') {
       // 下一帧再画：宿主刚从隐藏态出现时，这一帧内布局尺寸才就绪
       requestAnimationFrame(() => {
@@ -562,8 +565,14 @@
     } else {
       host.innerHTML = '';
       meta.innerHTML = '';
+      /* 三种「没有」必须看起来不同，否则都会被读成「还没加载完」：
+           源不可达   → 红底告警（renderWorld 里用 .state-error）
+           没有历史序列 → 虚线框（这里）—— 是「这项本来就没有」，不是出错
+           还没取到   → 灰字（默认 .state）
+         虚线框这条以前只是普通灰字，样式定义了却没人用。 */
+      state.className = 'state wfocus-state state-dashed';
       state.innerHTML = '这一项的数据源只给<b>当日快照</b>（' + esc(it.src || '') + '），' +
-        '没有可画的历史序列 —— 数值、涨跌与截至时间见上方的收起按钮一行。' +
+        '没有可画的历史序列 —— 数值、涨跌与截至时间见上方一行。' +
         (s.err ? ' <span class="up">取数报错：' + esc(s.err) + '</span>' : '');
     }
   }
