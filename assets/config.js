@@ -12,7 +12,7 @@
    每次改动源码都要 +1。页脚会显示它，用来确认「线上跑的到底是哪一版」——
    上传 / 部署之后如果页脚还是旧号，说明浏览器缓存没清或传错了路径。
    -------------------------------------------------------------------------- */
-const BUILD = '2026-09-23.5';
+const BUILD = '2026-09-23.6';
 
 /* 自检要探测的本地文件。
    作用：把「我传了但没生效」变成一个页面自己能回答的问题 ——
@@ -98,11 +98,12 @@ const WORLD_GROUPS = [
     ]
   },
   {
-    id: 'us', label: '美股与情绪', note: 'CNBC · 仅当日快照，无历史趋势',
+    id: 'us', label: '美股与情绪', note: 'CNBC 快照 + 腾讯日线',
     items: [
-      { id: '.SPX',  label: '标普500',  src: 'cnbc', digits: 2 },
-      { id: '.IXIC', label: '纳斯达克', src: 'cnbc', digits: 2 },
-      { id: '.DJI',  label: '道琼斯',   src: 'cnbc', digits: 2 },
+      { id: '.SPX',  label: '标普500',  src: 'cnbc', digits: 2, kline: 'us.INX' },
+      { id: '.IXIC', label: '纳斯达克', src: 'cnbc', digits: 2, kline: 'us.IXIC' },
+      { id: '.DJI',  label: '道琼斯',   src: 'cnbc', digits: 2, kline: 'us.DJI' },
+      // VIX 不给 kline：腾讯的 VIX 历史是一串常数，画出来是假线
       { id: '.VIX',  label: 'VIX 恐慌', src: 'cnbc', digits: 2 }
     ]
   },
@@ -122,7 +123,7 @@ const WORLD_GROUPS = [
   },
   {
     id: 'wh', label: '交易所仓单（在线复现）',
-    note: '东财数据中心 · 日频 · 与你的 CirculatingInventory 逐日一致',
+    note: '东财数据中心 · 日频 · 与你的 CirculatingInventory 逐日一致 · 看增减不看百分比，注销期归零属正常',
     items: [
       { id: 'TA', label: 'PTA 仓单',  src: 'em_stock', tons: 5,  digits: 4, suffix: '万吨' },
       { id: 'PX', label: 'PX 仓单',   src: 'em_stock', tons: 5,  digits: 4, suffix: '万吨' },
@@ -151,6 +152,9 @@ const MARQUEE_PICK = ['.DXY', 'US10Y', 'USDCNY', 'sh000001', '.SPX', '.VIX', 'hk
 
 /* 腾讯迷你趋势取几根日线 */
 const SPARK_DAYS = 60;
+
+/* 聚焦大图（点瓦片放大）取几根日线 */
+const FOCUS_DAYS = 120;
 
 /* --------------------------------------------------------------------------
    3. 情报流频道
@@ -210,6 +214,32 @@ const NEWWORDS = [
    -------------------------------------------------------------------------- */
 const CAL_VERIFIED_AT = '2026-09-22';
 
+/* 时间口径标注（tz）：
+   美国事件官方按美东时间（ET）公布，中国事件按北京时间（CST）。
+   页面两个都显示 —— 只写一个「本机时间」，换台设备看同一行会变成另一个数字，
+   对着一张官方日历对不上号。 */
+const CAL_TZ = { ET: '美东', CST: '北京' };
+const CAL_ZONE = { ET: 'America/New_York', CST: 'Asia/Shanghai' };
+
+/** 把时间戳按指定 IANA 时区渲染成「M/D HH:MM」，不受设备时区影响 */
+function fmtInZone (ts, tzKey) {
+  const zone = CAL_ZONE[tzKey] || CAL_ZONE.ET;
+  try {
+    const parts = new Intl.DateTimeFormat('zh-CN', {
+      timeZone: zone, month: 'numeric', day: 'numeric',
+      hour: '2-digit', minute: '2-digit', hour12: false
+    }).formatToParts(new Date(ts));
+    const g = k => (parts.find(x => x.type === k) || {}).value || '';
+    return g('month') + '/' + g('day') + ' ' + g('hour') + ':' + g('minute');
+  } catch (e) { return ''; }
+}
+
+/** 设备当前时区名，用来给「本机」那一段一个明确的标签 */
+function localZoneName () {
+  try { return Intl.DateTimeFormat().resolvedOptions().timeZone || '本机时区'; }
+  catch (e) { return '本机时区'; }
+}
+
 const FOMC_DATES = [                       // 第二天为决议日，14:00 ET 发布声明
   '2026-01-28', '2026-03-18', '2026-04-29', '2026-06-17',
   '2026-07-29', '2026-09-16', '2026-10-28', '2026-12-09',
@@ -226,44 +256,44 @@ const EIA_HOLIDAY_SHIFT = {                // 键=常规周三，值=官方实�
 
 const CALENDAR = [
   {
-    id: 'fomc', label: 'FOMC 利率决议', kind: 'exact', periodDays: 44,
+    id: 'fomc', label: 'FOMC 利率决议', kind: 'exact', periodDays: 44, tz: 'ET',
     src: 'https://www.federalreserve.gov/monetarypolicy/fomccalendars.htm',
-    note: '声明 14:00 ET，发布会 14:30 ET',
+    note: '第二天 14:00 ET 发声明，14:30 ET 开发布会',
     next: () => nextAtDates(FOMC_DATES, 14, 0),
     prev: () => prevAtDates(FOMC_DATES, 14, 0)
   },
   {
-    id: 'eia', label: 'EIA 原油库存周报', kind: 'exact', periodDays: 7,
+    id: 'eia', label: 'EIA 原油库存周报', kind: 'exact', periodDays: 7, tz: 'ET',
     src: 'https://www.eia.gov/petroleum/supply/weekly/schedule.cfm',
-    note: '周三 10:30 ET，假日顺延已含',
+    note: '周三 10:30 ET，官方假日顺延表已含',
     next: () => nextEia()
   },
   {
-    id: 'nonfarm', label: '美国非农就业', kind: 'rule', periodDays: 30,
+    id: 'nonfarm', label: '美国非农就业', kind: 'rule', periodDays: 30, tz: 'ET',
     src: 'https://www.bls.gov/schedule/news_release/empsit.htm',
     note: '每月第一个周五 08:30 ET',
     next: () => nextNthWeekdayEt(5, 1, 8, 30)
   },
   {
-    id: 'cpi', label: '美国 CPI', kind: 'rule', periodDays: 30,
+    id: 'cpi', label: '美国 CPI', kind: 'rule', periodDays: 30, tz: 'ET',
     src: 'https://www.bls.gov/schedule/news_release/cpi.htm',
     note: '约每月中旬 08:30 ET',
     next: () => nextMonthDayEt(12, 8, 30)
   },
   {
-    id: 'pmi', label: '中国官方制造业PMI', kind: 'rule', periodDays: 30,
+    id: 'pmi', label: '中国官方制造业PMI', kind: 'rule', periodDays: 30, tz: 'CST',
     src: 'https://www.stats.gov.cn/sj/zxfb/',
-    note: '约月末最后一日 09:30 CST',
+    note: '约月末最后一日 09:30 北京',
     next: () => nextMonthEnd(9, 30)
   },
   {
-    id: 'retail', label: '中国社零 / 工业增加值', kind: 'rule', periodDays: 30,
+    id: 'retail', label: '中国社零 / 工业增加值', kind: 'rule', periodDays: 30, tz: 'CST',
     src: 'https://www.stats.gov.cn/sj/zxfb/',
-    note: '约每月 15 日 10:00 CST',
+    note: '约每月 15 日 10:00 北京',
     next: () => nextMonthDay(15, 10, 0)
   },
   {
-    id: 'trade', label: '中国进出口（海关总署）', kind: 'rule', periodDays: 30,
+    id: 'trade', label: '中国进出口（海关总署）', kind: 'rule', periodDays: 30, tz: 'CST',
     src: 'http://www.customs.gov.cn/',
     note: '约每月 7–14 日',
     next: () => nextMonthDay(10, 10, 0)

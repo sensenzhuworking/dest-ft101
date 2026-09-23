@@ -18,6 +18,9 @@ const Desk = (() => {
     sinaM:   'https://stock2.finance.sina.com.cn/futures/api/jsonp.php/var%20{cb}=/InnerFuturesNewService.getFewMinLine?symbol={sym}&type={type}',
     txQ:     'https://qt.gtimg.cn/q={ids}',
     txK:     'https://web.ifzq.gtimg.cn/appstock/app/fqkline/get?param={id},day,,,{days},qfq',
+    // 通用日线（开高低收量）。指数不需要除权，A股/港股/美股指数同一条路；
+    // 实测 us.DJI / us.INX / us.IXIC / sh000905 / hkHSI 都能直接取。
+    txKB:    'https://web.ifzq.gtimg.cn/appstock/app/kline/kline?param={id},day,,,{days}',
     cnbc:    'https://quote.cnbc.com/quote-html-webservice/quote.htm?symbols={ids}' +
              '&requestMethod=quick&noform=1&partnerId=2&fund=1&exthrs=1&output=json'
   };
@@ -239,22 +242,77 @@ const Desk = (() => {
     return null;
   }
 
-  /* ---------------- 4. 腾讯：指数日线（画趋势） ---------------- */
+  /* ---------------- 4. 腾讯：指数日线（趋势 + 聚焦大图） ----------------
+     字段序两种接口一致：日期, 开, 收, 高, 低, 量
+     先走通用接口（美股指数只有这条），失败再退回原来那条（A股/港股实测稳）。
+     VIX 不在名单里：腾讯的 VIX 历史是一串常数，画出来是假线，不如不画。 */
 
-  async function txKline (id, days = SPARK_DAYS) {
-    const key = 'txk:' + id;
+  async function txBars (id, days = SPARK_DAYS) {
+    const key = 'txb:' + id + ':' + days;
     const cached = get(key, TTL.txk);
     if (cached) return cached;
-    const j = await fetchJson(T.txK.replace('{id}', id).replace('{days}', days), 9000);
-    const node = j && j.data && j.data[id];
-    if (!node) throw new Error('腾讯日线无该代码');
-    const arr = node.qfqday || node.day;
+
+    let arr = null;
+    try {
+      const j = await fetchJson(T.txKB.replace('{id}', id).replace('{days}', days), 9000);
+      const node = j && j.data && j.data[id];
+      arr = node && (node.day || node.qfqday);
+    } catch (e) { arr = null; }
+
+    if (!Array.isArray(arr) || !arr.length) {
+      const j = await fetchJson(T.txK.replace('{id}', id).replace('{days}', days), 9000);
+      const node = j && j.data && j.data[id];
+      arr = node && (node.qfqday || node.day);
+    }
     if (!Array.isArray(arr) || !arr.length) throw new Error('腾讯日线为空');
-    // 字段序：日期, 开, 收, 高, 低, 量
-    const out = arr.map(r => ({ time: r[0], close: parseFloat(r[2]) }))
-                   .filter(x => isFinite(x.close) && x.close > 0);
+
+    const out = arr.map(r => ({
+      time: String(r[0]).slice(0, 10),
+      open: parseFloat(r[1]), close: parseFloat(r[2]),
+      high: parseFloat(r[3]), low: parseFloat(r[4]),
+      volume: parseFloat(r[5]) || 0
+    })).filter(b => isFinite(b.open) && isFinite(b.close) &&
+                    isFinite(b.high) && isFinite(b.low) && b.close > 0);
+    if (!out.length) throw new Error('腾讯日线字段异常');
+    out.sort((a, b) => a.time < b.time ? -1 : a.time > b.time ? 1 : 0);
     put(key, out);
     return out;
+  }
+
+  /** 只要收盘价序列（画迷你趋势用），走同一份缓存，不重复打接口 */
+  async function txKline (id, days = SPARK_DAYS) {
+    return (await txBars(id, days)).map(b => ({ time: b.time, close: b.close }));
+  }
+
+  /* ---------------- 4b. 聚焦面板的数据分发 ----------------
+     全球市场每一张瓦片点开都要有东西可看。有日线画 K 线，只有收盘价画折线，
+     什么历史都没有就老老实实只给一个数值卡 —— 不编数据。
+     本地库的现货/汇率序列在 desk.json 的 series / fx 里。 */
+
+  async function itemSeries (it) {
+    if (it.kline) {
+      const bars = await txBars(it.kline, FOCUS_DAYS);
+      return { kind: 'bars', bars, src: '腾讯日线', unit: it.unit || '' };
+    }
+    const d = state.desk;
+    if (it.srcId === 'desk' && d && it.desk) {
+      const [code, pt] = it.desk;
+      const s = d.series && d.series[code] && d.series[code][pt];
+      if (Array.isArray(s) && s.length >= 2) {
+        return { kind: 'line', points: s, src: '本地库（日频）', unit: it.unit || '' };
+      }
+    }
+    if (it.srcId === 'deskFx' && d && d.fx && d.fx[it.id]) {
+      const f = d.fx[it.id];
+      if (Array.isArray(f.series) && f.series.length >= 2) {
+        return { kind: 'line', points: f.series, src: '汇率库（日频）', unit: '' };
+      }
+    }
+    if (it.srcId === 'em_stock') {
+      const s = await emStockHistory(it.id, it.tons || 5);
+      if (s.length >= 2) return { kind: 'line', points: s, src: '东财数据中心（日频）', unit: '万吨' };
+    }
+    return { kind: 'none', src: it.src };
   }
 
   /* ---------------- 5. CNBC：美债/美元/美股/商品 ---------------- */
@@ -325,6 +383,30 @@ const Desk = (() => {
       out[code] = rec;
       put(key, rec);
     });
+    return out;
+  }
+
+  /** 仓单历史：同一个接口，把 pageSize 放大就是逐日序列。
+   *  仓单增减是 PTA/PX 最直接的一手矛盾，点开瓦片就能看这条线。 */
+  async function emStockHistory (code, tons = 5, days = 90) {
+    const key = 'emhist:' + code + ':' + tons;
+    const cached = get(key, 6 * 3600e3);
+    if (cached) return cached;
+    const filter = encodeURIComponent('(SECURITY_CODE="' + code + '")');
+    const url = EM_DC + '?reportName=RPT_FUTU_STOCKDATA'
+      + '&columns=SECURITY_CODE,TRADE_DATE,ON_WARRANT_NUM'
+      + '&filter=' + filter
+      + '&pageNumber=1&pageSize=' + days +
+      '&sortColumns=TRADE_DATE&sortTypes=-1&source=WEB&client=WEB';
+    const j = await fetchJson(url, 9000);
+    const rows = (j && j.result && j.result.data) || [];
+    if (!rows.length) throw new Error('仓单历史为空');
+    const out = rows
+      .map(r => [String(r.TRADE_DATE || '').slice(0, 10), (+r.ON_WARRANT_NUM) * tons / 10000])
+      .filter(x => x[0] && isFinite(x[1]))
+      .sort((a, b) => a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0);
+    if (!out.length) throw new Error('仓单历史字段异常');
+    put(key, out);
     return out;
   }
 
@@ -407,7 +489,9 @@ const Desk = (() => {
       for (const it of g.items) {
         const p = picks[it.id];
         if (!p || !isFinite(p.value)) continue;
-        items.push(Object.assign({}, it, p, { label: it.label, group: g.id }));
+        // srcId 保留「配置里声明的源」：p.src 会被换成更好读的来源名
+        // （本地库 / 汇率库 / 东财数据中心），聚焦面板要靠 srcId 决定怎么取历史
+        items.push(Object.assign({}, it, p, { label: it.label, group: g.id, srcId: it.src }));
       }
       if (items.length) groups.push({ id: g.id, label: g.label, note: g.note, items });
     }
@@ -450,7 +534,8 @@ const Desk = (() => {
 
   return {
     T, state, TTL,
-    loadDesk, loadAiDigest, kline, world, marqueeFrom, txKline, cnbcQuotes, txQuotes, emStock,
+    loadDesk, loadAiDigest, kline, world, marqueeFrom, txKline, txBars, itemSeries,
+    cnbcQuotes, txQuotes, emStock, emStockHistory,
     get, put, jsonp, fetchJson,
     desk: () => state.desk,
     worldAt: () => state.worldAt,

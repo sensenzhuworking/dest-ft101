@@ -176,12 +176,16 @@ body {
 
 .kline-wrap { position: relative; }
 #kline { height: 300px; }
-#klineOhlc {
+#klineOhlc, .ohlc {
   position: absolute; left: 4px; top: 2px; z-index: 3;
-  display: flex; gap: 9px; font-family: var(--mono); font-size: 11px;
-  color: var(--fg-2); pointer-events: none; white-space: nowrap;
+  display: flex; flex-wrap: wrap; gap: 9px;
+  /* 十字光标读数有 7 个字段，窄屏一行排不下就会顶出卡片。
+     这里限宽 + 允许换行，配合媒体查询里的底色，压在蜡烛上也读得清。 */
+  max-width: calc(100% - 8px);
+  font-family: var(--mono); font-size: 11px;
+  color: var(--fg-2); pointer-events: none;
 }
-#klineOhlc b { font-weight: 400; }
+#klineOhlc b, .ohlc b { font-weight: 400; }
 
 .legend {
   display: flex; gap: 12px; font-size: 11px; color: var(--fg-3);
@@ -202,18 +206,22 @@ body {
 .chain::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
 
 .node {
-  flex: 1 1 0; min-width: 66px;
+  flex: 1 1 0; min-width: 70px;
   background: var(--panel-2);
   border: 1px solid var(--line);
   border-radius: var(--r-sm);
   padding: 6px 5px; text-align: center;
   cursor: pointer; font-family: inherit;
+  overflow: hidden;                     /* 数值不外溢：见下面 .p / .d 的说明 */
   transition: border-color .12s, background .12s;
 }
 .node:hover { border-color: var(--ic); background: var(--panel-3); }
 .node:focus-visible { outline: 2px solid var(--ic); outline-offset: 1px; }
 .node[aria-pressed="true"] { border-color: var(--ic); background: var(--panel-3); }
-.node .n { font-size: 11px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 三个字段必须是块级：原来是 inline 的 span，会挤在同一行上互相顶出框外
+   （「石脑油 7900 0.00%」「原油SC 724.0 +0.21%」就是这么跑出去的） */
+.node .n, .node .p, .node .d { display: block; white-space: nowrap; overflow: hidden; }
+.node .n { font-size: 11px; color: var(--fg-2); text-overflow: ellipsis; }
 .node .p { font-family: var(--mono); font-size: 12px; margin-top: 1px; }
 .node .d { font-family: var(--mono); font-size: 11px; }
 .node.u { border-left: 2px solid var(--up); }
@@ -228,11 +236,11 @@ body {
 .spreads { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
 .spread {
   background: var(--panel-2); border-radius: var(--r-sm);
-  padding: 8px 9px; min-width: 0;
+  padding: 8px 9px; min-width: 0; overflow: hidden;
 }
 .spread .lb { font-size: 11px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.spread .vl { font-family: var(--mono); font-size: 14px; margin-top: 2px; }
-.spread .dl { font-family: var(--mono); font-size: 11px; margin-top: 1px; }
+.spread .vl { font-family: var(--mono); font-size: 14px; margin-top: 2px; white-space: nowrap; overflow: hidden; }
+.spread .dl { font-family: var(--mono); font-size: 11px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .spread svg { display: block; margin-top: 5px; }
 
 /* ---------- 全球市场（宏观） --------------------------------------------- */
@@ -243,25 +251,60 @@ body {
   font-size: 11px; color: var(--fg-3); margin-bottom: 6px;
 }
 .mgroup-h .rule { flex: 1; height: 1px; background: var(--line); }
+.mgroup.mini { border-top-color: rgba(255,255,255,.04); }
+.mgroup.mini .mgroup-h { margin-bottom: 4px; }
 
 .mtiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 
+/* 瓦片是可点按钮：点一下把这一项放大成 K 线，其他项缩小让位 */
 .mtile {
-  background: var(--panel-2); border-radius: var(--r-sm);
-  padding: 7px 8px; min-width: 0;
+  display: block; width: 100%; text-align: left;
+  font: inherit; color: inherit; cursor: pointer;
+  background: var(--panel-2); border: 0; border-radius: var(--r-sm);
   border-left: 2px solid var(--fg-3);
+  padding: 7px 8px; min-width: 0; overflow: hidden;
+  transition: background .12s, box-shadow .12s;
 }
+.mtile:hover { background: var(--panel-3); }
+.mtile:focus-visible { outline: 2px solid var(--ic); outline-offset: 1px; }
+.mtile[aria-pressed="true"] { background: var(--panel-3); box-shadow: inset 0 0 0 1px rgba(0,145,212,.5); }
 .mtile.u { border-left-color: var(--up); }
 .mtile.d { border-left-color: var(--down); }
 .mtile .nm {
-  font-size: 11px; color: var(--fg-2);
+  display: block; font-size: 11px; color: var(--fg-2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.mtile .row { display: flex; align-items: baseline; gap: 6px; margin-top: 1px; }
-.mtile .vv { font-family: var(--mono); font-size: 13px; }
-.mtile .pc { font-family: var(--mono); font-size: 11px; }
+.mtile .row { display: flex; align-items: baseline; gap: 6px; margin-top: 1px; min-width: 0; }
+.mtile .vv { font-family: var(--mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
+.mtile .pc { font-family: var(--mono); font-size: 11px; white-space: nowrap; flex: none; }
 .mtile svg { display: block; margin-top: 4px; }
-.mtile .ft { font-size: 11px; color: var(--fg-3); margin-top: 3px; }
+.mtile .ft { display: block; font-size: 11px; color: var(--fg-3); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* 紧凑瓦片：有项目被放大时，其余项缩成一行读得完的小块 */
+.mtiles.compact { display: flex; flex-wrap: wrap; gap: 5px; }
+.mtile.c { display: inline-flex; align-items: baseline; gap: 6px; width: auto; padding: 2px 7px; }
+.mtile.c .c-nm { font-size: 11px; color: var(--fg-2); white-space: nowrap; }
+.mtile.c .c-vv { font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
+.mtile.c .c-pc { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+
+/* ---------- 全球市场：点击放大（聚焦） ----------------------------------- */
+
+.wfocus { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(190px, 1fr); gap: 10px; }
+.wfocus-main { min-width: 0; }
+.wfocus-h { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
+.wfocus-h b { font-size: 13px; font-weight: 500; }
+.wfocus-h .vv { font-family: var(--mono); font-size: 16px; }
+.wfocus-h .pc { font-family: var(--mono); font-size: 11.5px; }
+.wfocus-h .fnote { font-size: 11px; }
+.wfocus-h .spacer { margin-left: auto; }
+.wfocus-chart { position: relative; }
+.wchart { height: 320px; }
+.wfocus-meta { font-size: 11px; color: var(--fg-3); margin-top: 5px; line-height: 1.7; }
+.wfocus-meta b { color: var(--fg-2); font-weight: 400; font-family: var(--mono); }
+.wfocus-state { margin-top: 4px; }
+.wfocus-side { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
+.wfocus-side-h { font-size: 11px; color: var(--fg-3); }
+.wfocus-side .mtile.c { width: 100%; justify-content: space-between; }
 
 /* ---------- 情报流 -------------------------------------------------------- */
 
@@ -308,6 +351,10 @@ body {
 .cal-row .lb { color: var(--fg-2); }
 .cal-row .vv { margin-left: auto; font-family: var(--mono); color: var(--fg); }
 .cal-row + .cal-row { margin-top: 5px; }
+.cal-row.sub { display: block; font-size: 11px; color: var(--fg-3); margin-top: 2px; }
+.cal-row.sub b { color: var(--fg-2); font-weight: 400; font-family: var(--mono); }
+.cal-row.triple .mid { margin-left: auto; font-size: 11px; white-space: nowrap; }
+.cal-row.triple .vv { margin-left: 8px; }
 .bar { height: 3px; background: var(--line); border-radius: 2px; margin: 6px 0 10px; }
 .bar i { display: block; height: 3px; background: var(--ic); border-radius: 2px; }
 .warn {
@@ -425,7 +472,7 @@ body {
   .grid { grid-template-columns: minmax(0, 1fr); }
   .col-side { order: 2; }
   #newsList { height: 380px; }
-  #kline { height: 230px; }
+  #kline { height: 280px; }
   .topbar { height: auto; padding: 6px 10px; flex-wrap: wrap; row-gap: 4px; }
   .marquee { order: 3; flex-basis: 100%; }
   #clock { display: none; }
@@ -433,8 +480,18 @@ body {
   .card-h .tabs { width: 100%; }
   .card-h .tabs.spacer { margin-left: 0; }
   .card-h #klinePrice { margin-left: 0; width: 100%; }
-  .node { min-width: 74px; }
+  .node { min-width: 76px; }
   .mtiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  /* 聚焦面板在手机上单列堆叠：大图在上，同组其他在下面一行行排 */
+  .wfocus { grid-template-columns: minmax(0, 1fr); }
+  .wchart { height: 260px; }
+  .wfocus-side .mtile.c { width: auto; }
+  /* 读数字段多，给一层底色压在蜡烛上，防止糊成一片 */
+  #klineOhlc, .ohlc {
+    font-size: 10.5px; gap: 7px;
+    background: rgba(14, 17, 22, .78);
+    border-radius: 4px; padding: 1px 5px;
+  }
 }
 
 @media (prefers-reduced-motion: reduce) {

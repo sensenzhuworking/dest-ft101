@@ -16,6 +16,8 @@
     bars: [],
     loading: false,
     world: null,
+    focus: null,          // 全球市场聚焦中的瓦片 id
+    focusCache: {},       // 聚焦序列缓存：id → {kind, bars|points, src}
     ai: null,
     lastNewsCount: 0,
     timers: []
@@ -49,7 +51,12 @@
       if (!bars.length) throw new Error('空数据');
       S.bars = bars;
       const pdef = PERIODS.find(p => p.id === S.period) || {};
-      Charts.render($('kline'), bars, pdef.tail || 180);
+      Charts.draw($('kline'), bars, {
+        tail: pdef.tail || 180,
+        mas: [5, 20],
+        key: S.sym + '|' + S.period,
+        readout: $('klineOhlc')
+      });
       paintQuote(bars);
       const last = bars[bars.length - 1];
       $('klineState').innerHTML =
@@ -150,12 +157,34 @@
   }
 
   /* ======================================================================
-     4. 全球市场
+     4. 全球市场 —— 点击瓦片放大聚焦，其余瓦片缩小让位
      ====================================================================== */
 
   /** 数值显示：unit 是货币符号走前缀（$ ¥），suffix 是 % / pp 走后缀 */
   function valText (it) {
     return (it.unit || '') + fmtNum(it.value, it.digits) + (it.suffix || '');
+  }
+  /** 涨跌显示：百分比优先，没有百分比就用绝对涨跌（仓单、2s10s 就是这种） */
+  function pctText (it) {
+    if (it.pct == null && it.chg != null) return fmtSigned(it.chg, it.digits);
+    return fmtPct(it.pct, 2);
+  }
+  function chgText (it) {
+    return (it.pct == null && it.chg != null) ? fmtSigned(it.chg, it.digits) : fmtPct(it.pct, 2);
+  }
+  function footText (it) {
+    return it.live ? '' : '日终 ' + (it.asOf || '');
+  }
+  function tipText (it) {
+    return (it.note ? it.note + ' · ' : '') + (it.src || '') +
+      (it.ts ? ' · ' + new Date(it.ts).toLocaleString('zh-CN', { hour12: false }) : '') +
+      (it.kline || it.desk ? ' · 点击放大' : '');
+  }
+  /** 展开成扁平表，聚焦面板与刷新补值都用它 */
+  function worldFlat () {
+    const out = {};
+    if (S.world) for (const g of S.world.groups) for (const it of g.items) out[it.id] = it;
+    return out;
   }
 
   async function renderWorld () {
@@ -168,42 +197,203 @@
         '全球行情源暂时都不可达。本地产的 K 线、加工费、热力图不受影响，' +
         '点右上角「刷新」重试。</p>';
       $('worldNote').textContent = '源不可达';
+      S.focus = null;
       renderMarquee([]);
       renderFresh();
       return;
     }
 
-    box.innerHTML = res.groups.map(g => {
-      const tiles = g.items.map(it => {
-        const spark = it.spark && it.spark.length > 3
-          ? Charts.spark(it.spark, { w: 130, h: 24, color: Charts.colorFor(it.pct) })
-          : '';
-        return '<div class="mtile ' + cls(it.pct) + '">' +
-          '<div class="nm" title="' + esc((it.note ? it.note + ' · ' : '') + (it.src || '') +
-            (it.ts ? ' · ' + new Date(it.ts).toLocaleString('zh-CN', { hour12: false }) : '')) + '">' +
-            esc(it.label) + '</div>' +
-          '<div class="row"><span class="vv">' + esc(valText(it)) + '</span>' +
-          (it.pct == null && it.chg != null
-            ? '<span class="pc ' + cls(it.chg) + '">' + fmtSigned(it.chg, it.digits) + '</span>'
-            : '<span class="pc ' + cls(it.pct) + '">' + fmtPct(it.pct, 2) + '</span>') + '</div>' +
-          spark +
-          (it.live ? '' : '<div class="ft">日终 ' + esc(it.asOf || '') + '</div>') +
-          '</div>';
-      }).join('');
-      return '<div class="mgroup">' +
-        '<div class="mgroup-h"><span>' + esc(g.label) + '</span>' +
-        '<span class="dim2">' + esc(g.note || '') + '</span><span class="rule"></span></div>' +
-        '<div class="mtiles">' + tiles + '</div></div>';
-    }).join('');
+    // 聚焦的那一项在新数据里没了（源挂了），就自动退出聚焦，否则页面会卡在空面板上
+    if (S.focus && !worldFlat()[S.focus]) S.focus = null;
 
-    const liveN = res.groups.flatMap(g => g.items).filter(i => i.live).length;
-    const allN = res.groups.flatMap(g => g.items).length;
-    $('worldNote').innerHTML = '实时 ' + liveN + ' / 共 ' + allN + ' 项 · 更新于 ' +
+    // 聚焦时只补数值、不重建 DOM —— 重建会把图表实例拆掉，每 60 秒闪一次
+    if (S.focus && box.querySelector('.wfocus')) patchWorldValues();
+    else paintWorld();
+
+    $('worldNote').innerHTML = '实时 ' + res.groups.flatMap(g => g.items).filter(i => i.live).length +
+      ' / 共 ' + res.groups.flatMap(g => g.items).length + ' 项 · 更新于 ' +
       esc(new Date(res.at).toLocaleTimeString('zh-CN', { hour12: false })) +
       (res.errs.length ? ' · <span class="up">' + esc(res.errs.join('；')) + '</span>' : '');
 
     renderMarquee(Desk.marqueeFrom(res));
     renderFresh();
+  }
+
+  function tileHTML (it) {
+    const spark = it.spark && it.spark.length > 3
+      ? Charts.spark(it.spark, { w: 130, h: 24, color: Charts.colorFor(it.pct) })
+      : '';
+    const on = S.focus === it.id;
+    return '<button class="mtile ' + cls(it.pct) + '" type="button" data-wid="' + esc(it.id) + '" ' +
+      'aria-pressed="' + on + '" title="' + esc(tipText(it)) + '">' +
+      '<span class="nm">' + esc(it.label) + '</span>' +
+      '<span class="row"><span class="vv" data-f-v>' + esc(valText(it)) + '</span>' +
+      '<span class="pc ' + cls(it.pct) + '" data-f-p>' + esc(chgText(it)) + '</span></span>' +
+      spark +
+      (it.live ? '' : '<span class="ft" data-f-t>日终 ' + esc(it.asOf || '') + '</span>') +
+      '</button>';
+  }
+
+  /** 紧凑瓦片：聚焦时其余项用这个，只留名字/数值/涨跌，一眼扫完不抢视线 */
+  function miniHTML (it) {
+    return '<button class="mtile c ' + cls(it.pct) + '" type="button" data-wid="' + esc(it.id) + '" ' +
+      'title="' + esc(tipText(it)) + '">' +
+      '<span class="c-nm">' + esc(it.label) + '</span>' +
+      '<span class="c-vv num" data-f-v>' + esc(valText(it)) + '</span>' +
+      '<span class="c-pc num ' + cls(it.pct) + '" data-f-p>' + esc(chgText(it)) + '</span>' +
+      '</button>';
+  }
+
+  function groupHTML (g) {
+    const focused = g.items.some(i => i.id === S.focus);
+    if (focused) {
+      const main = g.items.find(i => i.id === S.focus);
+      const side = g.items.filter(i => i.id !== S.focus);
+      return '<div class="mgroup focus">' +
+        '<div class="mgroup-h"><span>' + esc(g.label) + '</span>' +
+        '<span class="dim2">' + esc(g.note || '') + '</span><span class="rule"></span></div>' +
+        '<div class="wfocus">' +
+          '<div class="wfocus-main">' + focusHeadHTML(main) +
+            '<div class="wfocus-chart">' +
+              '<div class="ohlc" id="wfocusOhlc" aria-hidden="true"></div>' +
+              '<div class="wchart" id="wfocusChart"></div>' +
+            '</div>' +
+            '<div class="wfocus-meta" id="wfocusMeta">—</div>' +
+            '<p class="state wfocus-state" id="wfocusState">正在取历史序列…</p>' +
+          '</div>' +
+          '<div class="wfocus-side">' +
+            '<div class="wfocus-side-h">同组其他' +
+              (side.length ? '' : '（本组只有这一项）') + '</div>' +
+            side.map(miniHTML).join('') +
+          '</div>' +
+        '</div></div>';
+    }
+    const mini = !!S.focus;      // 有聚焦项时，其他组整体缩小
+    return '<div class="mgroup' + (mini ? ' mini' : '') + '">' +
+      '<div class="mgroup-h"><span>' + esc(g.label) + '</span>' +
+      '<span class="dim2">' + esc(g.note || '') + '</span><span class="rule"></span></div>' +
+      '<div class="mtiles' + (mini ? ' compact' : '') + '">' +
+      g.items.map(mini ? miniHTML : tileHTML).join('') + '</div></div>';
+  }
+
+  function focusHeadHTML (it) {
+    return '<div class="wfocus-h">' +
+      '<b>' + esc(it.label) + '</b>' +
+      '<span class="vv num ' + cls(it.pct) + '" data-f-v2>' + esc(valText(it)) + '</span>' +
+      '<span class="pc num ' + cls(it.pct) + '" data-f-p2>' + esc(chgText(it)) + '</span>' +
+      '<span class="dim2 fnote" data-f-t2>' + esc(footText(it)) + '</span>' +
+      '<button class="btn spacer" type="button" data-wclose="1">收起</button></div>';
+  }
+
+  /** 只从已有 world 数据重建 DOM（切聚焦/退出聚焦时用，不重新打接口） */
+  function paintWorld () {
+    const box = $('world');
+    if (!S.world || !S.world.groups.length) return;
+    box.innerHTML = S.world.groups.map(groupHTML).join('');
+  }
+
+  /** 聚焦状态下 60 秒刷新：只改数字，不动结构，图表不重建 */
+  function patchWorldValues () {
+    const flat = worldFlat();
+    document.querySelectorAll('#world [data-wid]').forEach(el => {
+      const it = flat[el.dataset.wid];
+      if (!it) return;
+      el.classList.remove('u', 'd', 'flat');
+      el.classList.add(cls(it.pct));
+
+      const setText = (sel, txt) => {
+        const n = el.querySelector(sel);
+        if (n) n.textContent = txt;
+      };
+      const setCls = (sel, base) => {
+        const n = el.querySelector(sel);
+        if (n) n.className = base + ' ' + cls(it.pct);
+      };
+
+      setText('[data-f-v]', valText(it));
+      setText('[data-f-v2]', valText(it));
+      setText('[data-f-p]', chgText(it));
+      setText('[data-f-p2]', chgText(it));
+      setText('[data-f-t2]', footText(it));
+      setCls('[data-f-p]', el.querySelector('.mtile.c') ? 'c-pc num' : 'pc');
+      setCls('[data-f-p2]', 'pc num');
+    });
+  }
+
+  /* ---- 聚焦的开关与取数 ---- */
+
+  async function focusWorld (id) {
+    if (S.focus === id) { unfocusWorld(); return; }
+    S.focus = id;
+    paintWorld();
+    writeHash('w=' + id);
+    const host = document.querySelector('.wfocus');
+    if (host && host.scrollIntoView) host.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
+    await loadFocusSeries(id);
+  }
+
+  function unfocusWorld () {
+    S.focus = null;
+    paintWorld();
+    writeHash('');
+  }
+
+  /** 抓聚焦项的序列并画出来。三种情况分开处理，没有的就直说没有。 */
+  async function loadFocusSeries (id) {
+    const it = worldFlat()[id];
+    const host = $('wfocusChart');
+    if (!it || !host) return;
+    const meta = $('wfocusMeta'), state = $('wfocusState');
+
+    let s = S.focusCache[id];
+    if (!s) {
+      state.textContent = '正在取历史序列…';
+      try {
+        s = await Desk.itemSeries(it);
+        if (s.kind !== 'none') S.focusCache[id] = s;
+      } catch (e) {
+        s = { kind: 'none', src: it.src, err: String(e.message || e) };
+      }
+    }
+
+    // 用户可能在取数期间又点了别的
+    if (S.focus !== id) return;
+
+    if (s.kind === 'bars') {
+      Charts.draw(host, s.bars, {
+        tail: FOCUS_DAYS, mas: [5, 10], key: 'wf|' + id,
+        readout: $('wfocusOhlc'), digits: it.digits, fontSize: 11, barSpacing: 5
+      });
+      const st = Charts.stats(s.bars.slice(-FOCUS_DAYS));
+      meta.innerHTML = st
+        ? '区间 <b>' + st.n + '</b> 个交易日（' + esc(st.from) + ' → ' + esc(st.to) + '）· ' +
+          '高 <b class="up">' + fmtNum(st.high, it.digits) + '</b>' +
+          ' 低 <b class="down">' + fmtNum(st.low, it.digits) + '</b>' +
+          ' · 区间 <b class="' + cls(st.chg) + '">' + fmtSigned(st.chg, it.digits) + ' / ' +
+          fmtPct(st.pct, 2) + '</b>' + ' · 源 <b>' + esc(s.src) + '</b>'
+        : '';
+      state.innerHTML = '上图 <b>' + (it.label) + '</b> 日线 · 红涨绿跌 · ' +
+        '均线 MA5（蓝）/ MA10（青）· 双击图表复位缩放 · 再点一次瓦片收起';
+    } else if (s.kind === 'line') {
+      Charts.drawLine(host, s.points, {
+        key: 'wf|' + id, readout: $('wfocusOhlc'), digits: it.digits,
+        unit: s.unit || it.suffix || '', color: Charts.colorFor(it.pct), fontSize: 11
+      });
+      const pts = s.points;
+      const first = pts[0][1], last = pts[pts.length - 1][1];
+      meta.innerHTML = '区间 <b>' + pts.length + '</b> 期（' + esc(pts[0][0]) + ' → ' +
+        esc(pts[pts.length - 1][0]) + '）· 区间 <b class="' + cls(last - first) + '">' +
+        fmtSigned(last - first, it.digits) + ' / ' + fmtPct(first ? (last - first) / first * 100 : null, 2) +
+        '</b> · 源 <b>' + esc(s.src) + '</b>';
+      state.innerHTML = '这一项数据源只给收盘价，所以画<b>折线</b>（不假装有开高低）· ' +
+        '双击图表复位缩放 · 再点一次瓦片收起';
+    } else {
+      host.innerHTML = '';
+      meta.innerHTML = '';
+      state.innerHTML = '这一项的数据源只给<b>当日快照</b>（' + esc(it.src || '') + '），' +
+        '没有可画的历史序列 —— 数值、涨跌与截至时间见上方的收起按钮一行。' +
+        (s.err ? ' <span class="up">取数报错：' + esc(s.err) + '</span>' : '');
+    }
   }
 
   function renderMarquee (items) {
@@ -347,9 +537,22 @@
 
   /* ======================================================================
      6. 日历
+     时间口径：美国事件官方按美东（ET）公布，中国事件按北京（CST）。
+     两个都给，并标明哪个是官方口径 —— 只写「本机时间」的话，
+     同一行换台设备看会变成另一个数字，对着官方日历就没法核对了。
      ====================================================================== */
 
   function safeCall (fn) { try { return fn(); } catch (e) { return null; } }
+
+  function fmtLocal (ts) {
+    const d = new Date(ts);
+    return d.toLocaleDateString('zh-CN') + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes());
+  }
+
+  function officialText (ts, tz) {
+    const zone = tz || 'ET';
+    return fmtInZone(ts, zone) + ' ' + (CAL_TZ[zone] || zone);
+  }
 
   function renderCalendar () {
     const rows = CALENDAR.map(c => ({ c, t: safeCall(c.next) }))
@@ -377,25 +580,31 @@
     const total = prev ? top.t - prev : (top.c.periodDays || 30) * 864e5;
     const pct = Math.max(0, Math.min(100, (1 - left / total) * 100));
 
-    const d = new Date(top.t);
+    const note = top.c.note ? esc(top.c.note) : '';
     $('calTop').innerHTML =
       '<div class="cal-row"><span class="lb">' + esc(top.c.label) + '</span>' +
       '<span class="vv">' + fmtLeft(left) + '</span></div>' +
-      '<div class="cal-row"><span class="lb dim2">' +
-      d.toLocaleDateString('zh-CN') + ' ' + pad2(d.getHours()) + ':' + pad2(d.getMinutes()) +
-      ' 本机时间' + (prev ? ' · 本周期已过 ' + pct.toFixed(0) + '%' : '') + '</span></div>';
+      '<div class="cal-row sub"><span class="dim2">官方 <b>' +
+        esc(officialText(top.t, top.c.tz)) + '</b> · 你这里 <b>' +
+        esc(fmtLocal(top.t)) + '</b></span></div>' +
+      (note ? '<div class="cal-row sub"><span class="dim2">' + esc(CAL_TZ[top.c.tz || 'ET']) +
+        '口径：' + note + '</span></div>' : '') +
+      (prev ? '<div class="cal-row sub"><span class="dim2">本周期已过 ' +
+        pct.toFixed(0) + '%</span></div>' : '');
     $('calBar').innerHTML = '<i style="width:' + pct.toFixed(1) + '%"></i>';
 
     $('calRest').innerHTML = rows.slice(1, 6).map(x => {
-      const dd = new Date(x.t);
-      return '<div class="cal-row"><span class="lb">' + esc(x.c.label) + '</span>' +
-        '<span class="dim2" style="font-size:11px">' +
-        (x.c.kind === 'rule' ? '约 ' : '') + (dd.getMonth() + 1) + '/' + dd.getDate() + '</span>' +
+      const tz = x.c.tz || 'ET';
+      return '<div class="cal-row triple"><span class="lb">' + esc(x.c.label) + '</span>' +
+        '<span class="mid dim2">' + (x.c.kind === 'rule' ? '约 ' : '') +
+        esc(officialText(x.t, tz)) + '</span>' +
         '<span class="vv">' + fmtLeft(x.t - Date.now()) + '</span></div>';
     }).join('');
 
-    $('calNote').innerHTML = '标注「约」为规则推算，非官方公告；FOMC 与 EIA 用官方日历，' +
-      '本表核对于 ' + CAL_VERIFIED_AT + '。核对：' +
+    $('calNote').innerHTML = '时间一律标两套：<b>官方</b>是发布方口径（美国事件美东 ET、' +
+      '中国事件北京 CST），<b>你这里</b>是换算到这台设备时区（' +
+      esc(localZoneName()) + '）的结果。标注「约」为规则推算，非官方公告；' +
+      'FOMC 与 EIA 用官方日历，本表核对于 ' + CAL_VERIFIED_AT + '。核对：' +
       '<a href="' + CALENDAR[0].src + '" target="_blank" rel="noopener noreferrer" ' +
       'style="color:var(--ic);text-decoration:none">美联储</a> · ' +
       '<a href="' + CALENDAR[1].src + '" target="_blank" rel="noopener noreferrer" ' +
@@ -530,6 +739,23 @@
           }
         }
         return;
+      }
+
+      if (c0 === 'w' || c0 === 'focus' || c0 === 'zoom') {
+        const q = cmd.split(/\s+/).slice(1).join(' ').trim();
+        if (!q || q === 'off' || q === 'reset') {
+          unfocusWorld(); return say('  已收起全球市场放大图', 'ok');
+        }
+        const flat = worldFlat();
+        const item = flat[q] ||
+          Object.values(flat).find(i => i.id.toLowerCase() === q.toLowerCase() ||
+                                        String(i.label).includes(q));
+        if (!item) {
+          return say('  找不到「' + esc(q) + '」。可用的：' +
+            Object.values(flat).map(i => esc(i.label)).join(' / '), 'er');
+        }
+        focusWorld(item.id);
+        return say('  已放大 <span class="hl">' + esc(item.label) + '</span>', 'ok');
       }
 
       if (c0 === 'heat') {
@@ -755,6 +981,27 @@
       }
       S.sym = b.dataset.code; selectSym();
     });
+    // 全球市场：点瓦片放大 / 再点收起 / 点「收起」按钮
+    $('world').addEventListener('click', e => {
+      if (e.target.closest('[data-wclose]')) { unfocusWorld(); return; }
+      const t = e.target.closest('[data-wid]');
+      if (!t) return;
+      focusWorld(t.dataset.wid);
+    });
+    // Esc 退出聚焦（终端开着的时候不抢）
+    document.addEventListener('keydown', e => {
+      if (e.key === 'Escape' && S.focus && $('terminal').hidden) unfocusWorld();
+    });
+    // 手动改地址栏 / 收藏之间切换也要生效
+    window.addEventListener('hashchange', () => {
+      const h = decodeURIComponent(location.hash.replace(/^#/, '')).trim();
+      if (/^w=/i.test(h)) {
+        const id = h.slice(2);
+        if (S.world && worldFlat()[id] && S.focus !== id) focusWorld(id);
+      } else if (S.focus && !h) {
+        S.focus = null; paintWorld();
+      }
+    });
     $('heat').addEventListener('click', e => {
       const b = e.target.closest('.tile'); if (!b) return;
       const code = b.dataset.code;
@@ -817,16 +1064,29 @@
     return String(s).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
   }
 
-  /** 开场读地址栏锚点，把常用视图存成书签：#PX、#PX/W、#term */
+  /** 开场读地址栏锚点，把常用视图存成书签：#PX、#PX/W、#w=sh000905、#term */
   function applyHash () {
     const h = decodeURIComponent(location.hash.replace(/^#/, '')).trim();
     if (!h) return;
+    if (/^w=/i.test(h)) {
+      const id = h.slice(2);
+      if (S.world && worldFlat()[id]) focusWorld(id);
+      return;
+    }
     const [a, b] = h.split('/');
     if (a.toLowerCase() === 'term') { Terminal.show(); return; }
     const sym = Object.keys(S.desk.chart_map).find(k => k.toLowerCase() === a.toLowerCase());
     const per = PERIODS.find(p => p.id.toLowerCase() === (b || '').toLowerCase());
     if (sym) { S.sym = sym; selectSym(); }
     if (per) { S.period = per.id; selectPer(); }
+  }
+
+  /** 把当前视图写回地址栏，方便收藏 / 直接分享「我盯的就是这一张」 */
+  function writeHash (s) {
+    try {
+      const url = location.pathname + location.search + (s ? '#' + s : '');
+      history.replaceState(null, '', url);
+    } catch (e) { /* 某些内嵌浏览器不允许改地址，忽略 */ }
   }
 
   document.addEventListener('DOMContentLoaded', () => {
