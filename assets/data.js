@@ -284,12 +284,55 @@ const Desk = (() => {
     return (await txBars(id, days)).map(b => ({ time: b.time, close: b.close }));
   }
 
+  /* ---------------- 4a. 新浪期货日线：国内商品主力（全球市场面板用） ----------------
+     与上方主力 K 线是同一个接口、同一套解析，只是符号不同（MA0 / EB0 / V0 / CF0 …）。
+     一次请求同时喂三处：瓦片的值、迷你趋势、聚焦大图 —— 值取最后一根日线的收盘。
+     所以脚注如实写「日终」：这个源不给盘中快照，就不假装给。
+     ⚠ 回调名必须按符号分开，否则并发请求不同符号时会互相覆盖 window 上的变量。 */
+  async function sinaBars (sym, days = SPARK_DAYS) {
+    const key = 'sinab:' + sym + ':' + days;
+    const cached = get(key, TTL.txk);
+    if (cached) return cached;
+    const raw = await jsonp(T.sinaK.replace('{sym}', sym), '_s' + sym);
+    const out = sanitize(raw.map(x => ({
+      time: String(x.d).slice(0, 10),
+      open: +x.o, high: +x.h, low: +x.l, close: +x.c, volume: +x.v || 0
+    })));
+    if (!out.length) throw new Error('新浪日线为空');
+    put(key, out);
+    return out;
+  }
+
   /* ---------------- 4b. 聚焦面板的数据分发 ----------------
      全球市场每一张瓦片点开都要有东西可看。有日线画 K 线，只有收盘价画折线，
      什么历史都没有就老老实实只给一个数值卡 —— 不编数据。
      本地库的现货/汇率序列在 desk.json 的 series / fx 里。 */
 
+  /** 这一项有没有历史序列可画？决定它渲染成「可点瓦片」还是「只读快照条」。
+   *  ⚠ 必须在取数阶段就算出来并挂到项上：等到用户点下去才知道没东西，
+   *    那他看到的已经是一个空白面板了 —— 那正是要消灭的体验。 */
+  function seriesCapable (it) {
+    if (it.src === 'sina') return true;             // 新浪日线：任何符号都有
+    if (it.kline) return true;                      // 腾讯日线
+    if (it.src === 'em_stock') return true;         // 东财仓单历史
+    const d = state.desk;
+    if (it.src === 'desk' && d && it.desk) {
+      const [code, pt] = it.desk;
+      const s = d.series && d.series[code] && d.series[code][pt];
+      return Array.isArray(s) && s.length >= 2;
+    }
+    if (it.src === 'deskFx' && d && d.fx && d.fx[it.id]) {
+      const f = d.fx[it.id];
+      return Array.isArray(f.series) && f.series.length >= 2;
+    }
+    return false;                                   // CNBC 快照 / 派生利差
+  }
+
   async function itemSeries (it) {
+    if (it.srcId === 'sina') {
+      const bars = await sinaBars(it.id, FOCUS_DAYS);
+      return { kind: 'bars', bars, src: '新浪日线', unit: it.unit || '' };
+    }
     if (it.kline) {
       const bars = await txBars(it.kline, FOCUS_DAYS);
       return { kind: 'bars', bars, src: '腾讯日线', unit: it.unit || '' };
@@ -315,14 +358,12 @@ const Desk = (() => {
     return { kind: 'none', src: it.src };
   }
 
-  /* ---------------- 5. CNBC：美债/美元/美股/商品 ---------------- */
+  /* ---------------- 5. CNBC：美债/美元/美股/商品/全球股指 ----------------
+     一次请求能带多少个符号没有官方说法，实测 15 个稳。品类扩到 25 个之后
+     拆成每批 12 个并发打 —— 只多一次请求，但不会因为 URL 太长整批静默失败。 */
+  const CNBC_CHUNK = 12;
 
-  async function cnbcQuotes (ids) {
-    if (!ids.length) return {};
-    const key = 'cnbc:' + ids.join('|');
-    const cached = get(key, TTL.cnbc);
-    if (cached) return cached;
-
+  async function cnbcBatch (ids) {
     const url = T.cnbc.replace('{ids}', ids.map(encodeURIComponent).join('%7C'));
     const j = await fetchJson(url, 10000);
     const list = j && j.QuickQuoteResult && j.QuickQuoteResult.QuickQuote;
@@ -340,6 +381,19 @@ const Desk = (() => {
         live: true, src: 'CNBC'
       };
     }
+    return out;
+  }
+
+  async function cnbcQuotes (ids) {
+    if (!ids.length) return {};
+    const key = 'cnbc:' + ids.join('|');
+    const cached = get(key, TTL.cnbc);
+    if (cached) return cached;
+
+    const chunks = [];
+    for (let i = 0; i < ids.length; i += CNBC_CHUNK) chunks.push(ids.slice(i, i + CNBC_CHUNK));
+    const parts = await Promise.all(chunks.map(c => cnbcBatch(c)));
+    const out = Object.assign({}, ...parts);
     if (!Object.keys(out).length) throw new Error('CNBC 未解析出数据');
     put(key, out);
     return out;
@@ -440,6 +494,7 @@ const Desk = (() => {
     const txIds    = all.filter(i => i.src === 'tx').map(i => i.id);
     const cnbcIds  = all.filter(i => i.src === 'cnbc').map(i => i.id);
     const whIds    = all.filter(i => i.src === 'em_stock').map(i => i.id);
+    const sinaIds  = all.filter(i => i.src === 'sina').map(i => i.id);
 
     // 三类在线源并行；单源失败不影响别的源
     const [txRes, cnbcRes, whRes] = await Promise.all([
@@ -448,12 +503,37 @@ const Desk = (() => {
       emStock(whIds).catch(e => { errs.push('仓单: ' + e.message); return null; })
     ]);
 
+    /* 国内商品主力：新浪日线。并发压到 3 —— 20 多个符号一起打，
+       在 i5 上会把主线程占满、还容易被源限流。缓存 30 分钟，所以只有首屏这一波。 */
+    const sinaRes = {};
+    if (sinaIds.length) {
+      let sinaErr = 0;
+      await mapLimit(sinaIds, 3, async id => {
+        try { sinaRes[id] = await sinaBars(id, SPARK_DAYS); }
+        catch (e) { sinaErr++; }
+      });
+      // 全挂才报错；个别符号取不到就让它安静地缺一格，不刷屏
+      if (sinaErr === sinaIds.length) errs.push('新浪日线: 全部符号不可达');
+      else if (sinaErr) errs.push('新浪日线: ' + sinaErr + ' 个符号不可达');
+    }
+
     const picks = {};
     for (const it of all) {
       if (it.src === 'tx')   picks[it.id] = txRes && txRes[it.id];
       if (it.src === 'cnbc') picks[it.id] = cnbcRes && cnbcRes[it.id];
       if (it.src === 'desk') picks[it.id] = deskValue(it.desk);
       if (it.src === 'deskFx') picks[it.id] = deskFxValue(it.id);
+      if (it.src === 'sina') {
+        const bars = sinaRes[it.id];
+        if (bars && bars.length >= 2) {
+          const last = bars[bars.length - 1], prev = bars[bars.length - 2];
+          picks[it.id] = {
+            value: last.close, chg: +(last.close - prev.close).toFixed(4),
+            pct: prev.close ? +((last.close - prev.close) / prev.close * 100).toFixed(4) : null,
+            asOf: last.time, live: false, src: '新浪日线'
+          };
+        }
+      }
       if (it.src === 'em_stock') {
         const r = whRes && whRes[it.id];
         if (r) picks[it.id] = {
@@ -466,6 +546,12 @@ const Desk = (() => {
         };
       }
     }
+    // 新浪项：同一份日线再供一份收盘序列当迷你趋势，不额外打接口
+    for (const id of Object.keys(sinaRes)) {
+      const bars = sinaRes[id];
+      if (picks[id] && bars.length >= 3) picks[id].spark = bars.map(b => b.close);
+    }
+
     // 派生项：2s10s = 10Y − 2Y
     for (const it of all) {
       if (it.src !== 'spread') continue;
@@ -514,7 +600,9 @@ const Desk = (() => {
         if (!p || !isFinite(p.value)) continue;
         // srcId 保留「配置里声明的源」：p.src 会被换成更好读的来源名
         // （本地库 / 汇率库 / 东财数据中心），聚焦面板要靠 srcId 决定怎么取历史
-        items.push(Object.assign({}, it, p, { label: it.label, group: g.id, srcId: it.src }));
+        // hasSeries 决定渲染形态：可点瓦片 vs 只读快照条（见 seriesCapable）
+        items.push(Object.assign({}, it, p,
+          { label: it.label, group: g.id, srcId: it.src, hasSeries: seriesCapable(it) }));
       }
       if (items.length) groups.push({ id: g.id, label: g.label, note: g.note, items });
     }
@@ -557,7 +645,7 @@ const Desk = (() => {
 
   return {
     T, state, TTL,
-    loadDesk, loadAiDigest, kline, world, marqueeFrom, txKline, txBars, itemSeries,
+    loadDesk, loadAiDigest, kline, world, marqueeFrom, txKline, txBars, sinaBars, itemSeries,
     cnbcQuotes, txQuotes, emStock, emStockHistory,
     get, put, jsonp, fetchJson,
     desk: () => state.desk,

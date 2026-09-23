@@ -1,9 +1,12 @@
 #!/usr/bin/env python3
-"""用 DeepSeek 给驾驶舱生成「今日复盘 + 异动归因 + 今日情报」，产出 data/ai_digest.json。
+"""用 DeepSeek 给驾驶舱生成「今日复盘 + 异动归因 + 今日情报 + 情报分析」，
+产出 data/ai_digest.json。
 
-两块输出，一次调用：
+三块输出，一次调用：
   · digest / drivers —— 基于你自己的截面数据做复盘与归因
   · headlines       —— 只基于【新闻标题】压出的「今日情报」，3-5 条，扫读用
+  · macro_brief     —— 同一批标题，回答「这些事合起来说明什么」：
+                       read 一句粗判 + points 3-5 条证据。前端的「情报分析」卡读它。
 
 设计目标是「最少 token」，不是「最会用 AI」：
 
@@ -15,8 +18,10 @@
   3. 整个上下文算 sha256 存进产物。数据没变就直接复用上次结果，一次 API 都不打。
   4. system prompt 完全固定 → DeepSeek 的磁盘前缀缓存按 cache-hit 价计费（约为未命中的 1/50）。
   5. `--dry-run` 不发请求，只把 prompt 和 token 估算打出来，你可以先看再决定花不花。
+  6. headlines 与 macro_brief 是【同一次调用】的两个字段，不是两次请求 ——
+     想让页面上的粗分析更勤地更新，加密的是运行频率，不是调用次数。
 
-实测一次约 1500 输入 + 500 输出，粗算 $0.0002 —— 一天一次，一个月不到一分钱。
+实测一次约 1600 输入 + 700 输出，粗算 $0.0003 —— 一天跑几回，一个月几分钱。
 
 密钥只从环境变量或 .env 读，永远不写进任何会被提交的文件。
 
@@ -319,11 +324,20 @@ SYSTEM = (
     '{"digest": "2-3 句中文复盘，说明今天的核心矛盾与成本-需求传导是否顺畅",\n'
     ' "drivers": [{"code": "品种代码", "text": "一句话归因"}],\n'
     ' "headlines": [{"tag": "分类标签，2 字以内", "text": "一句话，不超过 22 字"}],\n'
+    ' "macro_brief": {"read": "一句话粗判，不超过 45 字",\n'
+    '                 "points": [{"tag": "分类标签，2 字以内", "text": "一句话，不超过 24 字"}]},\n'
     ' "warnings": ["数据或口径上的提醒"]}\n'
     "drivers 只写异动幅度大或价差明显变化的品种，最多 3 条；没有就留空数组。\n"
     "headlines 是「今日情报」：只依据【今日新闻标题】那一段，把今天发生的、"
     "对能化与聚酯有意义的事压成 3-5 条。一条一件事，不合并、不复述、不展开；"
     "标题里没提到的事一律不写；标题之间讲同一件事的只留一条。\n"
+    "macro_brief 是「情报分析」，也只依据【今日新闻标题】，但回答的是另一个问题："
+    "headlines 回答「今天发生了什么」，macro_brief 回答「这些事合起来说明什么」。"
+    "read 必须是一句判断句（宏观主线是什么、对能化与聚酯意味着什么），"
+    "不是把几条标题串起来的罗列句；points 给 3-5 条支撑这句判断的事实，"
+    "每条一个两字标签（政策/货币/需求/供应/成本/海外/心态）。"
+    "read 与 points 必须真的对得上：points 是证据，read 是从证据里得出的结论；"
+    "证据不足时 read 就写「今日无明确主线」，不要硬凑一句正确的废话。\n"
     "写作要求：数字写进句子里，不要孤立罗列；不要用「不是X而是Y」这种句式；"
     "不要用「首先/其次/最后」这类机械连接词；不要写免责声明。"
 )
@@ -361,6 +375,35 @@ def call_deepseek(key: str, model: str, context: str, max_out: int,
     except urllib.error.HTTPError as e:
         detail = e.read().decode("utf-8", "replace")[:500]
         raise RuntimeError(f"HTTP {e.code}: {detail}") from None
+
+
+def _norm_brief(b) -> dict:
+    """把模型给的 macro_brief 归一成 {"read": str, "points": [{"tag","text"}]}。
+    模型偶尔会退化：read 给成列表、points 给成字符串数组、或整段缺失。
+    这里全部吸收掉 —— 前端只认一种形状，脏数据不该让它显示成半张卡。"""
+    if not isinstance(b, dict):
+        return {"read": "", "points": []}
+    read = b.get("read")
+    if isinstance(read, (list, tuple)):
+        read = " ".join(str(x) for x in read)
+    read = str(read or "").strip()
+    pts = b.get("points")
+    if isinstance(pts, dict):
+        pts = [pts]
+    if not isinstance(pts, (list, tuple)):
+        pts = []
+    out = []
+    for p in pts:
+        if isinstance(p, dict):
+            tag = str(p.get("tag") or "").strip()[:3]
+            text = str(p.get("text") or "").strip()
+        else:
+            s = str(p or "").strip()
+            i = s.find("：") if "：" in s else s.find(":")
+            tag, text = (s[:i].strip()[:3], s[i + 1:].strip()) if 0 < i <= 3 else ("", s)
+        if text:
+            out.append({"tag": tag, "text": text})
+    return {"read": read, "points": out[:6]}
 
 
 def extract_answer(resp: dict) -> dict:
@@ -402,7 +445,9 @@ def main() -> int:
     ap = argparse.ArgumentParser()
     ap.add_argument("--dry-run", action="store_true", help="不发请求，只打印 prompt 与 token 估算")
     ap.add_argument("--model", default=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"))
-    ap.add_argument("--max-out", type=int, default=700, help="输出上限 token（关掉 thinking 后 700 很宽裕）")
+    ap.add_argument("--max-out", type=int, default=1000,
+                    help="输出上限 token（关掉 thinking 后 1000 很宽裕；"
+                         "digest+drivers+headlines+macro_brief 四段实测约 700）")
     ap.add_argument("--thinking", action="store_true", help="开启思考模式（更准但更贵，且需要更大的 max-out）")
     ap.add_argument("--news-limit", type=int, default=32,
                     help="喂给模型的新闻标题条数上限。只喂标题，所以可以比原来多带一些，"
@@ -525,6 +570,9 @@ def main() -> int:
         "drivers": parsed.get("drivers") or [],
         # 今日情报：只由新闻标题压出来，一天 3-5 条，扫读用
         "headlines": parsed.get("headlines") or [],
+        # 情报分析：同一批标题，回答的是「合起来说明什么」——
+        # 与 headlines 是同一次调用的两个输出，不额外花钱
+        "macro_brief": _norm_brief(parsed.get("macro_brief")),
         "warnings": parsed.get("warnings") or [],
         "tokens": est,
         "peak": peak,
@@ -541,6 +589,11 @@ def main() -> int:
         print(f"     · {d.get('code')} {d.get('text')}")
     for h in payload["headlines"]:
         print(f"     [情报] {h.get('tag', '')} {h.get('text', '')}")
+    mb = payload.get("macro_brief") or {}
+    if mb.get("read"):
+        print(f"     [分析] {mb['read']}")
+    for p in mb.get("points") or []:
+        print(f"            {p.get('tag', '')} {p.get('text', '')}")
     return 0
 
 

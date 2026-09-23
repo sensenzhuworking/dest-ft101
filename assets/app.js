@@ -9,6 +9,19 @@
   const $ = id => document.getElementById(id);
   const pad2 = n => String(n).padStart(2, '0');
 
+  /* 分组展开态落盘。品类扩到十几个组之后，「我想看哪几组」是用户的长期偏好，
+     不该每次刷新页面都回到默认值。以前只在内存里，刷新即忘。
+     ⚠ OPEN_KEY 必须在 S 之前声明：S 的初始化里就会调 readOpen()。 */
+  const OPEN_KEY = 'desk.open.v1';
+  function readOpen () {
+    try { return JSON.parse(localStorage.getItem(OPEN_KEY) || '{}') || {}; }
+    catch (e) { return {}; }
+  }
+  function writeOpen () {
+    try { localStorage.setItem(OPEN_KEY, JSON.stringify(S.open)); }
+    catch (e) { /* 隐私模式，忽略 */ }
+  }
+
   const S = {
     desk: null,
     sym: 'PTA',
@@ -20,8 +33,8 @@
     worldShape: '',       // 上次渲染的面板形状签名（同签名 = 就地补值，不重建 DOM）
     focus: null,          // 全球市场聚焦中的瓦片 id
     focusCache: {},       // 聚焦序列缓存：id → {kind, bars|points, src}
-    open: {},             // 全球市场分组展开态：groupId → bool（默认见 WORLD_EXPAND_HINT）
-    macro: { lastRun: 0, dayKey: '', todayCount: 0, busy: false },  // 宏观速览节流态
+    open: readOpen(),     // 全球市场分组展开态：groupId → bool（默认见 WORLD_EXPAND_HINT）
+    macro: { lastRun: 0, dayKey: '', todayCount: 0, busy: false },  // 实时压缩节流态
     ai: null,
     lastNewsCount: 0,
     lastNewsAt: 0,        // 情报流上次成功刷新时刻（后台追平用）
@@ -234,7 +247,9 @@
           fmtTrim(it.lastNonZero.value, 4) + ' 万吨' : '') +
         ' · 点击放大';
     }
-    return base + (it.kline || it.desk ? ' · 点击聚焦' : '');
+    // 没有历史序列的项：明说「只有快照」，而不是给一个点了没反应的暗示
+    if (!it.hasSeries) return base + ' · 只有当日快照，没有历史序列';
+    return base + ' · 点击聚焦';
   }
   /** 展开成扁平表，聚焦面板与刷新补值都用它 */
   function worldFlat () {
@@ -289,6 +304,8 @@
     box.innerHTML = '<div class="skeleton">' + '<i></i>'.repeat(8) + '</div>';
   }
 
+  /** 可点瓦片：数据源有历史序列可画的项。
+   *  点它 = 在所在分组下方就地展开 K 线 / 折线。 */
   function tileHTML (it) {
     // 仓单用中性 Seaglass 画趋势：红涨绿跌在这条线上没有意义（仓单下降不等于价格下跌），
     // 沿用涨跌色会让人把「仓单降」读成「看空」。
@@ -301,7 +318,7 @@
       : '';
     const on = S.focus === it.id;
     const ct = chgText(it);
-    // 没有涨跌数据的项（派生利差）：给一个安静的「静态」小章，
+    // 没有涨跌数据的项：给一个安静的「静态」小章，
     // 而不是一个孤零零的破折号 —— 破折号看着像没取到，小章看着是「本来就没有」。
     const chg = ct == null
       ? '<span class="pc none" data-f-p>静态</span>'
@@ -312,10 +329,27 @@
         (it.srcId === 'em_stock' && it.value === 0 ? '<i class="tagzero">清零</i>' : '') + '</span>' +
       '<span class="row"><span class="vv" data-f-v>' + esc(valText(it)) + '</span>' + chg + '</span>' +
       /* 走势带固定占位：没有历史序列的项也留出同样高度，
-         让 31 张瓦片严格等高（原来实测出现 67/88/97/118 四种高度，看着就是没做完） */
+         让同屏瓦片严格等高（原来实测出现 67/88/97/118 四种高度，看着就是没做完） */
       '<span class="sp">' + spark + '</span>' +
       '<span class="ft" data-f-t>' + esc(footText(it)) + '</span>' +
       '</button>';
+  }
+
+  /** 只读快照条：数据源只给当日快照、没有历史序列的项（VIX、2s10s、CNBC 的全球股指与商品）。
+   *  刻意不用 <button>、不给 tabindex —— 它点不开，就不该长得像点得开。
+   *  以前这些也是瓦片，点下去弹一句「这一项的数据源只给当日快照」，等于让用户先撞一次墙。
+   *  现在改成一条紧凑的扁片：值 + 涨跌 + 截至，一眼扫完，不留任何可点的暗示。 */
+  function snapHTML (it) {
+    const ct = chgText(it);
+    const pct = ct == null
+      ? '<span class="pc none" data-f-p>静态</span>'
+      : '<span class="pc ' + chgCls(it) + '" data-f-p>' + esc(ct) + '</span>';
+    return '<span class="msnap ' + chgCls(it) + (ct == null ? ' noc' : '') + '" ' +
+      'data-wid="' + esc(it.id) + '" title="' + esc(tipText(it)) + '">' +
+      '<span class="nm">' + esc(it.label) + '</span>' +
+      '<span class="vv" data-f-v>' + esc(valText(it)) + '</span>' + pct +
+      '<span class="ft" data-f-t>' + esc(footText(it)) + '</span>' +
+      '</span>';
   }
 
   /** 分组展开态：优先会话内的选择，默认见 WORLD_EXPAND_HINT */
@@ -331,9 +365,13 @@
     return g.items.length + ' 项 · 涨 ' + u + ' · 跌 ' + d;
   }
 
-  /** 分组：标题始终是可点按钮（⌄ 开 / ⌃ 合），展开 = 完整网格，折叠 = 单行横向摘要 */
+  /** 分组：标题始终是可点按钮（⌄ 开 / ⌃ 合），展开 = 完整网格，折叠 = 单行横向摘要。
+   *  展开时先排「可点瓦片」，再把只读快照条并成一行放在下面 ——
+   *  两类东西的交互能力不同，就不该混在同一个网格里。 */
   function groupHTML (g) {
     const open = groupOpen(g.id);
+    const tiles = g.items.filter(i => i.hasSeries);
+    const snaps = g.items.filter(i => !i.hasSeries);
     return '<div class="mgroup" data-open="' + (open ? 1 : 0) + '" id="grp-' + esc(g.id) + '">' +
       '<button class="mgroup-sum" type="button" data-toggle="' + esc(g.id) +
         '" aria-expanded="' + open + '" aria-controls="grp-' + esc(g.id) + '">' +
@@ -342,7 +380,13 @@
         (g.note ? '<span class="g-note">' + esc(g.note) + '</span>' : '') +
         (open ? '<span class="rule"></span>' : '<span class="g-count">' + groupSummary(g) + '</span>') +
       '</button>' +
-      '<div class="mtiles">' + g.items.map(tileHTML).join('') + '</div></div>';
+      (tiles.length ? '<div class="mtiles">' + tiles.map(tileHTML).join('') + '</div>' : '') +
+      (snaps.length
+        ? '<div class="msnaps">' +
+            '<span class="snap-lb" title="这些项的数据源只给当日快照，没有可画的历史序列，所以是只读的">快照</span>' +
+            snaps.map(snapHTML).join('') + '</div>'
+        : '') +
+      '</div>';
   }
 
   /** 右栏 <section id="inspector"> 的头部：名称 + 现价 + 涨跌 + 截至 */
@@ -391,7 +435,11 @@
     if (!box || !S.world) return false;
     const flat = worldFlat();
     let hit = 0;
-    for (const tile of box.querySelectorAll('.mtile[data-wid]')) {
+    // 选择器要同时覆盖可点瓦片（.mtile）与只读快照条（.msnap）——
+    // 两者都带 data-wid 与同一套 [data-f-v]/[data-f-p]/[data-f-t] 锚点，
+    // 所以下面这段补值逻辑对两者是同一份代码。漏掉快照条的话，
+    // hit 永远小于总数，补值路径会静默退化成「每次都重建 DOM」。
+    for (const tile of box.querySelectorAll('[data-wid]')) {
       const it = flat[tile.dataset.wid];
       if (!it) return false;                       // 有项消失 → 交给重建
       const v = tile.querySelector('[data-f-v]');
@@ -459,6 +507,10 @@
 
   function focusWorld (id) {
     if (S.focus === id) { unfocusWorld(); return; }
+    const it0 = worldFlat()[id];
+    // 只读快照项根本不该走到这里（它们不是 button、也不进点击委托）。
+    // 这一句是兜底：地址栏 #w=xxx 书签、hashchange 都能绕过渲染层直接点名。
+    if (it0 && !it0.hasSeries) return;
     S.focus = id;
     const it = worldFlat()[id];
     // 所在分组若被折叠，先展开 —— 图表要出现在它的上下文里
@@ -975,67 +1027,103 @@
   function announce (t) { const el = $('live'); if (el) el.textContent = t; }
 
   /* ======================================================================
-     8b. 宏观速览 —— 把已抓到的情报流里宏观/政策/产业类新条目，压缩成几条要点
-     · 只消费 News.state.items（绝不重新打接口），走 AI_PROXY（Cloudflare
-       Worker → DeepSeek）。前端不放任何密钥。
-     · 省 token：冷却 12 分钟 + 单日 30 次 + 每次最多喂 8 条、输出 5 条。
-     · 未配置 AI_PROXY.url = 整卡隐藏，不调任何 API、不花钱。
+     8b. 情报分析 —— 对「今天滚动的宏观情报」做一次粗分析
+     · 默认走【静态】：内容由 tools/ai_digest.py 在 GitHub Actions 上生成，
+       写进 data/ai_digest.json 的 macro_brief。前端只是读文件 ——
+       页面零 API 调用、零密钥暴露、刷新多少次都不花钱。
+       这是最省 token 的路子：token 只花在「一天几次的判断」上，
+       不花在「每 45 秒一次的搬运」上。
+     · 可选走【实时】：config.js 配好 AI_PROXY.url 时，在静态版之上再补一次
+       实时压缩（冷却 12 分钟 + 单日 30 次封顶）。没配就完全不走这条路。
+     · 产物缺失 / 字段缺失 → 整卡隐藏，不留「未启用」占位噪音。
      ====================================================================== */
 
-  /** 只从宏观相关频道筛候选，按 新→旧 排，限 maxNews 条。
-   *  ⚠ 只带标题，不带正文摘要 —— 摘要会让输入 token 成倍增长而边际信息很少。
-   *    标题本身已经是编辑压过一轮的东西，这是最省的一刀。 */
-  function macroCandidates () {
-    const want = new Set(MACRO_OVERVIEW.channels);
-    return News.state.items
-      .filter(x => { for (const c of x.channels) if (want.has(c)) return true; return false; })
-      .map(x => ({
-        t: String(x.title || '').slice(0, 46),
-        ch: [...x.channels].find(c => want.has(c)) || ''
-      }))
-      .slice(0, MACRO_OVERVIEW.maxNews);
+  /** 把产物里的条目统一成 {tag, text}。
+   *  新产物是结构化对象；老产物（以及「今日情报」兜底）也是。 */
+  function normPoint (pt) {
+    if (pt && typeof pt === 'object') {
+      return { tag: String(pt.tag || '').slice(0, 3), text: String(pt.text || '') };
+    }
+    // 代理返回的是「标签：正文」的单行字符串，这里做同一套拆解
+    const s = String(pt == null ? '' : pt);
+    const i = s.indexOf('：') === -1 ? s.indexOf(':') : s.indexOf('：');
+    if (i > 0 && i <= 3) return { tag: s.slice(0, i).trim(), text: s.slice(i + 1).trim() };
+    return { tag: '', text: s };
+  }
+
+  /** 静态产物的内容。macro_brief 优先；老产物没有这个字段时退回「今日情报」——
+   *  同一批标题、同一套压缩，不该因为字段名不同就整卡空着。 */
+  function staticBrief () {
+    const d = S.ai;
+    if (!d) return null;
+    const titles = (d.inputs || {}).news_titles || 0;
+    const b = d.macro_brief;
+    if (b && Array.isArray(b.points) && b.points.length) {
+      return { read: String(b.read || ''), points: b.points, at: d.generated_at,
+               titles, src: 'AI 情报分析' };
+    }
+    if (Array.isArray(d.headlines) && d.headlines.length) {
+      return { read: '', points: d.headlines, at: d.generated_at,
+               titles, src: '今日情报' };
+    }
+    return null;
   }
 
   function macroConfigured () { return !!(AI_PROXY && AI_PROXY.url); }
 
-  /** 启动时定一次宏观卡形态：已配置→触发压缩；未配置→整卡保持隐藏（零噪音零请求） */
+  /** 渲染静态粗分析。整卡形态只由这里决定；实时那条路只在成功后覆盖正文。 */
+  function renderMacroStatic () {
+    const card = $('macroCard'), body = $('macroBody'), note = $('macroNote');
+    if (!card || !body) return;
+    const b = staticBrief();
+    if (!b) { card.hidden = true; return; }
+    card.hidden = false;
+    const pts = b.points.slice(0, MACRO_BRIEF.maxPoints).map(normPoint).filter(p => p.text);
+    const when = String(b.at || '').slice(0, 16).replace('T', ' ');
+    note.textContent = (b.titles ? '基于当日 ' + b.titles + ' 条标题' : '当日情报') +
+      (when ? ' · ' + when : '');
+    const tk = (S.ai && S.ai.tokens) || {};
+    const inTok = (tk.prompt_hit || 0) + (tk.prompt_miss || 0);
+    body.innerHTML =
+      (b.read ? '<p class="mb-read">' + mdLite(b.read) + '</p>' : '') +
+      '<div class="mb-pts">' + pts.map(p =>
+        '<div class="mi"><div class="m-h">' +
+          (p.tag ? '<span class="tag">' + esc(p.tag) + '</span>' : '') +
+        '</div><p>' + mdLite(p.text) + '</p></div>').join('') + '</div>' +
+      /* 把这一段的成本明写出来：它一次只跑几回，看得见才好判断值不值 */
+      '<p class="mb-foot">' + esc(b.src) + ' · 仅据标题压缩，标题里没有的事不写' +
+        (MACRO_BRIEF.showTokens && inTok
+          ? ' · 一次 ' + inTok + ' + ' + (tk.completion || 0) + ' tokens'
+          : '') +
+      '</p>';
+  }
+
   function initMacro () {
     const card = $('macroCard');
     if (!card) return;
-    if (macroConfigured()) { runMacro(); return; }
-    card.hidden = true;
+    renderMacroStatic();
+    if (macroConfigured()) runMacro();   // 配了代理才补一次实时压缩
   }
 
-  function showMacro (msgHtml, noteText) {
-    const card = $('macroCard');
-    if (!card) return;
-    card.hidden = false;
-    $('macroBody').innerHTML = '<p class="state" style="border:0;margin:0">' + msgHtml + '</p>';
-    $('macroNote').textContent = noteText || '—';
-  }
-
-  function renderMacro (points, nFeeds, empty, err) {
-    const body = $('macroBody'), card = $('macroCard');
-    if (!body || !card) return;
-    card.hidden = false;
-    $('macroNote').textContent = nFeeds ? '基于 ' + nFeeds + ' 条最新情报' : '—';
+  /** 实时那条路只在成功后覆盖正文：失败时静态版还在，不会把内容换成一句报错。 */
+  function renderMacroLive (points, nFeeds, empty, err) {
+    const body = $('macroBody'), note = $('macroNote');
+    if (!body) return;
     if (err) {
-      body.innerHTML = '<div class="state-error">宏观速览失败：' + esc(String(err.message || err)) + '</div>';
+      if (note) note.textContent += ' · 实时压缩失败，显示的是上一版静态结论';
       return;
     }
     if (!points.length) {
-      body.innerHTML = '<p class="state-empty">' +
-        (empty ? '本轮无值得提炼的宏观增量，跳过。' : '尚无宏观要点可提炼。') + '</p>';
+      if (note) note.textContent = (empty ? '本轮无值得提炼的增量' : '尚无可提炼要点') + ' · 静态版见上';
       return;
     }
-    body.innerHTML = points.map(pt => {
-      const i = pt.indexOf('：') === -1 ? pt.indexOf(':') : pt.indexOf('：');
-      let tag = '', txt = pt;
-      if (i > 0 && i <= 3) { tag = pt.slice(0, i).trim(); txt = pt.slice(i + 1).trim(); }
-      return '<div class="mi"><div class="m-h">' +
-        (tag ? '<span class="tag">' + esc(tag) + '</span>' : '') +
-        '</div><p>' + mdLite(txt) + '</p></div>';
-    }).join('');
+    if (note) note.textContent = '实时压缩 · 基于 ' + nFeeds + ' 条最新情报';
+    body.innerHTML = '<div class="mb-pts">' +
+      points.map(normPoint).map(p =>
+        '<div class="mi"><div class="m-h">' +
+          (p.tag ? '<span class="tag">' + esc(p.tag) + '</span>' : '') +
+        '</div><p>' + mdLite(p.text) + '</p></div>').join('') + '</div>' +
+      '<p class="mb-foot">实时压缩 · 仅据标题，标题里没有的事不写</p>';
   }
 
   /** 调 DeepSeek（经代理）：只依据喂给它的标题压缩，严禁编造 */
@@ -1067,6 +1155,21 @@
       .slice(0, MACRO_OVERVIEW.maxPoints);
   }
 
+  /** 只从宏观相关频道筛候选，按 新→旧 排，限 maxNews 条。
+   *  ⚠ 只带标题，不带正文摘要 —— 摘要会让输入 token 成倍增长而边际信息很少。
+   *    标题本身已经是编辑压过一轮的东西，这是最省的一刀。
+   *  （仅 AI_PROXY 已配置的实时路径用得到；静态路径在服务端做同一件事。） */
+  function macroCandidates () {
+    const want = new Set(MACRO_OVERVIEW.channels);
+    return News.state.items
+      .filter(x => { for (const c of x.channels) if (want.has(c)) return true; return false; })
+      .map(x => ({
+        t: String(x.title || '').slice(0, 46),
+        ch: [...x.channels].find(c => want.has(c)) || ''
+      }))
+      .slice(0, MACRO_OVERVIEW.maxNews);
+  }
+
   async function runMacro () {
     if (S.macro.busy || !macroConfigured()) return;
     const now = Date.now();
@@ -1076,16 +1179,18 @@
     const cands = macroCandidates();
     if (!cands.length) return;
     S.macro.busy = true;
-    showMacro('正在压缩 <b>' + cands.length + '</b> 条最新情报…', '宏观速览');
+    // 只动 note，不覆盖正文 —— 静态版的内容要一直留在屏幕上
+    const note = $('macroNote');
+    if (note) note.textContent = '正在压缩 ' + cands.length + ' 条最新情报…';
     try {
       const points = await macroCall(cands);
       S.macro.lastRun = Date.now();
       S.macro.todayCount++;
-      renderMacro(points, cands.length, !points.length);
+      renderMacroLive(points, cands.length, !points.length);
     } catch (e) {
       // 调失败也推进冷却，避免网络抖动把配额烧穿
       S.macro.lastRun = Date.now();
-      renderMacro([], cands.length, false, e);
+      renderMacroLive([], cands.length, false, e);
     } finally {
       S.macro.busy = false;
     }
@@ -1422,16 +1527,17 @@
       }
       S.sym = b.dataset.code; selectSym();
     });
-    // 全球市场：点折叠标题切换展开 / 点瓦片聚焦到右栏 Inspector
+    // 全球市场：点折叠标题切换展开 / 点瓦片就地聚焦（快照条不参与，它不是可点元素）
     $('world').addEventListener('click', e => {
       const tg = e.target.closest('[data-toggle]');
       if (tg) {
         S.open[tg.dataset.toggle] = !groupOpen(tg.dataset.toggle);
+        writeOpen();
         paintWorld();
         return;
       }
       if (e.target.closest('[data-wclose]')) { unfocusWorld(); return; }
-      const t = e.target.closest('[data-wid]');
+      const t = e.target.closest('.mtile[data-wid]');
       if (!t) return;
       focusWorld(t.dataset.wid);
     });
@@ -1492,7 +1598,8 @@
     bindOnce();
     if (!boot._newsInit) {
       boot._newsInit = true;
-      News.init().then(() => { S.lastNewsAt = Date.now(); initMacro(); });
+      // 只记刷新时刻；情报分析卡要等 ai_digest.json 读完才渲染（见下面的 initMacro）
+      News.init().then(() => { S.lastNewsAt = Date.now(); });
     }
 
     S.desk = await Desk.loadDesk();
@@ -1512,6 +1619,7 @@
 
     S.ai = await Desk.loadAiDigest();
     renderAi();
+    initMacro();          // 情报分析卡读的就是 S.ai，必须在它之后渲染
 
     // 先放骨架再取数：全球市场卡从 320px 长到 949px，
     // 没有占位的话首次加载会把滚动位置顶下去（CLS）

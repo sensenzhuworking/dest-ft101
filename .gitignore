@@ -5,3 +5,7 @@ data/ai_digest.json
 
 # 示例产物是提交的，真实产物不提交
 !data/ai_digest.example.json
+
+# 别把 py_compile 的产物提交上去
+__pycache__/
+*.pyc

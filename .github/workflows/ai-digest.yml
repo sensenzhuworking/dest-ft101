@@ -1,4 +1,4 @@
-name: 每日 AI 复盘
+name: 每日 AI 复盘 + 情报分析
 
 # 跑在 GitHub 的服务器上 —— 你的电脑关机、断网、带走都不影响。
 # 需要的唯一东西：把 DeepSeek 密钥存成仓库 secret（加密存储，不会出现在网页里，
@@ -8,11 +8,21 @@ name: 每日 AI 复盘
 #   Name  填 DEEPSEEK_API_KEY
 #   Secret 粘贴你的密钥
 #
-# 配好之后：每天北京时间 17:00 自动跑一次；也可以在 Actions 页面手动触发。
+# 配好之后：每天北京时间 09:00 / 12:00 / 15:00 / 18:00 各跑一次；
+# 也可以在 Actions 页面手动触发。
+#
+# 为什么一天跑四次而不是一次：页面右栏那块「情报分析」讲的是「今天的情报说明什么」，
+# 只跑一次的话，白天看到的永远是昨晚的结论。
+#
+# 成本要说清楚，别自我安慰：输入哈希覆盖的是「截面数据 + 新闻标题」整体，
+# 白天标题一直在变，所以这四次**都是真实调用**，不是三次命中缓存。
+# 真正省下来的是 system 前缀 —— DeepSeek 有磁盘前缀缓存，那 600 多 token 按 1/50 计费。
+# 实测每次约 1800 输入 + 最多 1000 输出，粗算 $0.00025；
+# 一天四次约 $0.001，一个月约 3 分钱。四次换来的是「下午看到的不是早上的判断」，值。
 
 on:
   schedule:
-    - cron: '0 9 * * *'
+    - cron: '0 1,4,7,10 * * *'   # UTC → 北京 09:00 / 12:00 / 15:00 / 18:00
   workflow_dispatch:
 
 permissions:
@@ -48,7 +58,7 @@ jobs:
         if: always()
         run: |
           if [ -f data/ai_digest.json ]; then
-            python3 -c "import json;d=json.load(open('data/ai_digest.json',encoding='utf-8'));t=d.get('tokens',{});print('模型    :',d.get('model'));print('复用上次:',d.get('cached'));print('tokens  :',t);print('输入标题:',(d.get('inputs') or {}).get('news_titles'),'条');print('复盘    :',(d.get('digest') or '')[:200]);print('今日情报:',len(d.get('headlines') or []),'条')"
+            python3 -c "import json;d=json.load(open('data/ai_digest.json',encoding='utf-8'));t=d.get('tokens',{});mb=d.get('macro_brief') or {};print('模型    :',d.get('model'));print('复用上次:',d.get('cached'));print('tokens  :',t);print('输入标题:',(d.get('inputs') or {}).get('news_titles'),'条');print('复盘    :',(d.get('digest') or '')[:200]);print('今日情报:',len(d.get('headlines') or []),'条');print('情报分析:',mb.get('read') or '(空)');print('  证据  :',len(mb.get('points') or []),'条')"
           else
             echo "::warning::没有生成 data/ai_digest.json，看上面「生成复盘」那一步的报错"
           fi

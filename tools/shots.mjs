@@ -9,7 +9,9 @@ const fs = await import('node:fs');
 const path = await import('node:path');
 
 const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', [
-  '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
+  // ⚠ --no-proxy-server 不能删：本机 HTTPS_PROXY=127.0.0.1:51990 会被 Chrome 当系统代理，
+  // 连 127.0.0.1:8791 都走代理 → 截出来的是 chrome-error 页。
+  '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars', '--no-proxy-server',
   `--remote-debugging-port=${PORT}`, '--user-data-dir=/tmp/cdp-shots', 'about:blank'
 ], { stdio: 'ignore' });
 
@@ -41,10 +43,11 @@ const send = (method, params = {}) => {
 await send('Runtime.enable');
 
 const shots = [
-  { file: '01-桌面总览.png',      url: base,          w: 1680, h: 1500, mobile: false },
-  { file: '02-全球市场.png',      url: base + '#PX/W', w: 1680, h: 1500, mobile: false },
-  { file: '03-移动端390px.png',   url: base,          w: 390,  h: 1200, mobile: true },
-  { file: '04-终端模式.png',      url: base + '#term', w: 1680, h: 880,  mobile: false }
+  { file: '01-桌面总览.png',        url: base,             w: 1680, h: 1500, mobile: false },
+  { file: '02-全球市场-11组.png',   url: base + '#w=MA0',  w: 1680, h: 2600, mobile: false },
+  { file: '03-情报流与情报分析.png', url: base,             w: 1680, h: 1500, mobile: false, scrollTo: '#newsList' },
+  { file: '04-移动端390px.png',     url: base,             w: 390,  h: 1400, mobile: true },
+  { file: '05-终端模式.png',        url: base + '#term',   w: 1680, h: 880,  mobile: false }
 ];
 
 for (const s of shots) {
@@ -52,6 +55,12 @@ for (const s of shots) {
     { width: s.w, height: s.h, deviceScaleFactor: 1, mobile: s.mobile });
   await send('Page.navigate', { url: s.url });
   await sleep(17000);
+  if (s.scrollTo) {
+    await send('Runtime.evaluate', {
+      expression: `(()=>{const e=document.querySelector('${s.scrollTo}');if(e)e.scrollIntoView({block:'start'});window.scrollBy(0,-120);})()`
+    });
+    await sleep(1200);
+  }
   const r = await send('Page.captureScreenshot', { format: 'png', captureBeyondViewport: true });
   const file = path.join(outDir, s.file);
   fs.writeFileSync(file, Buffer.from(r.result.data, 'base64'));

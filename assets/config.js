@@ -12,7 +12,7 @@
    每次改动源码都要 +1。页脚会显示它，用来确认「线上跑的到底是哪一版」——
    上传 / 部署之后如果页脚还是旧号，说明浏览器缓存没清或传错了路径。
    -------------------------------------------------------------------------- */
-const BUILD = '2026-09-23.24';
+const BUILD = '2026-09-24.01';
 
 /* 自检要探测的本地文件。
    作用：把「我传了但没生效」变成一个页面自己能回答的问题 ——
@@ -70,14 +70,22 @@ const WAREHOUSE = [
    2. 全球市场面板
    每个瓦片声明一个 src，data.js 里按 src 分发。全部实测过浏览器可直连：
 
-     cnbc    一次请求拿全部：美债 2Y/10Y/30Y、美元指数、美国三大指数、VIX、金/铜/油
-     tx      腾讯 qt.gtimg.cn，A股与港股指数 + VIX（CORS *）
-     txk     腾讯 web.ifzq.gtimg.cn 日线，用来画迷你趋势（60 天只要 6 KB）
-     desk    你自己的 desk.json（现货/期货日终，口径与你数据库一致）
-     deskFx  你自己的 FX_rate_Source.xlsx
+     tx       腾讯 qt.gtimg.cn —— A股/港股指数（CORS *）
+     txk      腾讯 web.ifzq.gtimg.cn 日线 —— 迷你趋势 + 聚焦大图（60 天只要 6 KB）
+     cnbc     CNBC quote —— 一次请求拿全部：美债 2Y/5Y/10Y/30Y/3M、日德10年、
+              美元指数、美国三大指数、VIX、金/银/铜/铝/天然气、日韩德英法台股指
+     desk     你自己的 desk.json（现货/期货日终，口径与你数据库一致）
+     deskFx   你自己的 FX_rate_Source.xlsx
+     em_stock 东财数据中心 —— 交易所仓单
+     sina     新浪期货 JSONP —— 国内商品期货主力（与上方 K 线同一个源、同一个接口）
+     spread   本地派生（2s10s）
 
    注：布伦特/WTI 故意用 desk 而不是 CNBC —— CNBC 的布伦特报 100.22，
    你自己的库是 96.24，跟新浪 OIL 的 96.24 一致。同一屏里口径必须统一。
+
+   是否「点得开」不在这里写死：data.js 取数时会算出 hasSeries 挂到每一项上。
+   没有历史序列的项（VIX、2s10s、CNBC 的全球股指）由 app.js 渲染成不可点的快照条 ——
+   点开一片空白比不给点更糟。
    -------------------------------------------------------------------------- */
 const WORLD_GROUPS = [
   {
@@ -86,6 +94,10 @@ const WORLD_GROUPS = [
       { id: 'sh000001', label: '上证指数', src: 'tx', kline: 'sh000001', digits: 2 },
       { id: 'sh000300', label: '沪深300',  src: 'tx', kline: 'sh000300', digits: 2 },
       { id: 'sh000905', label: '中证500',  src: 'tx', kline: 'sh000905', digits: 2 },
+      { id: 'sh000852', label: '中证1000', src: 'tx', kline: 'sh000852', digits: 2 },
+      { id: 'sh000016', label: '上证50',   src: 'tx', kline: 'sh000016', digits: 2 },
+      { id: 'sh000688', label: '科创50',   src: 'tx', kline: 'sh000688', digits: 2 },
+      { id: 'sz399001', label: '深证成指', src: 'tx', kline: 'sz399001', digits: 2 },
       { id: 'sz399006', label: '创业板指', src: 'tx', kline: 'sz399006', digits: 2 }
     ]
   },
@@ -95,6 +107,17 @@ const WORLD_GROUPS = [
       { id: 'hkHSI',     label: '恒生指数', src: 'tx', kline: 'hkHSI',     digits: 2 },
       { id: 'hkHSTECH',  label: '恒生科技', src: 'tx', kline: 'hkHSTECH',  digits: 2 },
       { id: 'hkHSCEI',   label: '国企指数', src: 'tx', kline: 'hkHSCEI',   digits: 2 }
+    ]
+  },
+  {
+    id: 'gl', label: '全球股指', note: 'CNBC 快照 · 源不提供历史序列，故只读不可点',
+    items: [
+      { id: '.N225',  label: '日经225',    src: 'cnbc', digits: 2 },
+      { id: '.KS11',  label: '韩国KOSPI',  src: 'cnbc', digits: 2 },
+      { id: '.GDAXI', label: '德国DAX',    src: 'cnbc', digits: 2 },
+      { id: '.FTSE',  label: '英国富时100', src: 'cnbc', digits: 2 },
+      { id: '.FCHI',  label: '法国CAC40',  src: 'cnbc', digits: 2 },
+      { id: '.TWII',  label: '中国台湾加权', src: 'cnbc', digits: 2 }
     ]
   },
   {
@@ -111,14 +134,80 @@ const WORLD_GROUPS = [
     id: 'rates', label: '利率与美元', note: 'CNBC + 你的汇率库',
     items: [
       { id: 'US10Y', label: '美债10年', src: 'cnbc', digits: 3, suffix: '%' },
+      { id: 'US5Y',  label: '美债5年',  src: 'cnbc', digits: 3, suffix: '%' },
       { id: 'US2Y',  label: '美债2年',  src: 'cnbc', digits: 3, suffix: '%' },
       { id: 'US30Y', label: '美债30年', src: 'cnbc', digits: 3, suffix: '%' },
+      { id: 'US3M',  label: '美债3月',  src: 'cnbc', digits: 3, suffix: '%' },
       { id: '2s10s', label: '2s10s 利差', src: 'spread', from: ['US10Y', 'US2Y'],
         digits: 3, suffix: 'pp', note: '10Y − 2Y，负值即倒挂' },
+      { id: 'JP10Y', label: '日本10年', src: 'cnbc', digits: 3, suffix: '%' },
+      { id: 'DE10Y', label: '德国10年', src: 'cnbc', digits: 3, suffix: '%' },
       { id: '.DXY',  label: '美元指数', src: 'cnbc', digits: 3 },
       { id: 'USDCNY', label: 'USDCNY', src: 'deskFx', digits: 4 },
       { id: 'USDJPY', label: 'USDJPY', src: 'deskFx', digits: 2 },
       { id: 'USDKRW', label: 'USDKRW', src: 'deskFx', digits: 2 }
+    ]
+  },
+  {
+    id: 'pet', label: '聚酯链现货（你的库）',
+    note: '本地数据库 · 日频 · 口径与加工费完全一致 · 点开有 30 日走势',
+    items: [
+      { id: 'POY_SPOT',  label: 'POY 长丝',  src: 'desk', desk: ['POY', 'spot'],  digits: 0, unit: '¥' },
+      { id: 'FDY_SPOT',  label: 'FDY 长丝',  src: 'desk', desk: ['FDY', 'spot'],  digits: 0, unit: '¥' },
+      { id: 'DTY_SPOT',  label: 'DTY 长丝',  src: 'desk', desk: ['DTY', 'spot'],  digits: 0, unit: '¥' },
+      { id: 'CHIP_SPOT', label: '聚酯切片',  src: 'desk', desk: ['CHIP', 'spot'], digits: 0, unit: '¥' },
+      { id: 'PTA_SPOT',  label: 'PTA 现货',  src: 'desk', desk: ['PTA', 'spot'],  digits: 0, unit: '¥' },
+      { id: 'MEG_SPOT',  label: 'MEG 现货',  src: 'desk', desk: ['MEG', 'spot'],  digits: 0, unit: '¥' },
+      { id: 'PX_SPOT',   label: 'PX 现货',   src: 'desk', desk: ['PX', 'spot'],   digits: 0, unit: '¥' },
+      { id: 'SC_SPOT',   label: 'SC 原油现货', src: 'desk', desk: ['SC', 'spot'], digits: 1, unit: '¥' }
+    ]
+  },
+  {
+    id: 'chem', label: '能化期货（国内主力）',
+    note: '新浪日线 · 与上方 K 线同一源 · 值为日终结算前的最后价 · 点开看 120 日 K 线',
+    items: [
+      { id: 'MA0', label: '甲醇 MA',   src: 'sina', digits: 0, unit: '¥' },
+      { id: 'EB0', label: '苯乙烯 EB', src: 'sina', digits: 0, unit: '¥' },
+      { id: 'V0',  label: 'PVC V',     src: 'sina', digits: 0, unit: '¥' },
+      { id: 'L0',  label: '塑料 L',    src: 'sina', digits: 0, unit: '¥' },
+      { id: 'PP0', label: '聚丙烯 PP', src: 'sina', digits: 0, unit: '¥' },
+      { id: 'SA0', label: '纯碱 SA',   src: 'sina', digits: 0, unit: '¥' },
+      { id: 'FG0', label: '玻璃 FG',   src: 'sina', digits: 0, unit: '¥' },
+      { id: 'UR0', label: '尿素 UR',   src: 'sina', digits: 0, unit: '¥' },
+      { id: 'FU0', label: '燃料油 FU', src: 'sina', digits: 0, unit: '¥' },
+      { id: 'BU0', label: '沥青 BU',   src: 'sina', digits: 0, unit: '¥' }
+    ]
+  },
+  {
+    id: 'tex', label: '纺织原料', note: '新浪日线 · 棉花是聚酯的直接替代品，看它才知道替代压力',
+    items: [
+      { id: 'CF0', label: '棉花 CF', src: 'sina', digits: 0, unit: '¥' },
+      { id: 'CY0', label: '棉纱 CY', src: 'sina', digits: 0, unit: '¥' }
+    ]
+  },
+  {
+    id: 'metal', label: '黑色与有色', note: '新浪日线 · 成本与需求的宏观温度计',
+    items: [
+      { id: 'RB0', label: '螺纹钢 RB', src: 'sina', digits: 0, unit: '¥' },
+      { id: 'I0',  label: '铁矿石 I',  src: 'sina', digits: 1, unit: '¥' },
+      { id: 'CU0', label: '沪铜 CU',   src: 'sina', digits: 0, unit: '¥' },
+      { id: 'AL0', label: '沪铝 AL',   src: 'sina', digits: 0, unit: '¥' }
+    ]
+  },
+  {
+    id: 'comm', label: '商品与产业链上游', note: '你的数据库优先，口径与加工费一致',
+    items: [
+      { id: 'SC',      label: 'SC原油',  src: 'desk', desk: ['SC', 'futures'],      digits: 1, unit: '¥' },
+      { id: 'BRENT',   label: '布伦特',  src: 'desk', desk: ['BRENT', 'spot'],      digits: 2, unit: '$' },
+      { id: 'WTI',     label: 'WTI',    src: 'desk', desk: ['WTI', 'spot'],        digits: 2, unit: '$' },
+      { id: 'NAPHTHA', label: '石脑油',  src: 'desk', desk: ['NAPHTHA', 'spot'],   digits: 0, unit: '¥' },
+      { id: '@GC.1',   label: 'COMEX黄金', src: 'cnbc', digits: 1, unit: '$' },
+      { id: '@SI.1',   label: 'COMEX银',  src: 'cnbc', digits: 3, unit: '$' },
+      { id: '@HG.1',   label: 'COMEX铜',  src: 'cnbc', digits: 3, unit: '$' },
+      { id: '@AL.1',   label: 'CME铝',    src: 'cnbc', digits: 1, unit: '$' },
+      { id: '@NG.1',   label: 'NYMEX天然气', src: 'cnbc', digits: 3, unit: '$' },
+      { id: '@BZ.1',   label: '布伦特(CNBC)', src: 'cnbc', digits: 2, unit: '$',
+        note: '与你的库口径不同，留作对照' }
     ]
   },
   {
@@ -130,25 +219,12 @@ const WORLD_GROUPS = [
       { id: 'PF', label: '短纤 仓单', src: 'em_stock', tons: 5,  digits: 4, suffix: '万吨' },
       { id: 'PR', label: '瓶片 仓单', src: 'em_stock', tons: 15, digits: 4, suffix: '万吨' }
     ]
-  },
-  {
-    id: 'comm', label: '商品与产业链上游', note: '你的数据库优先，口径与加工费一致',
-    items: [
-      { id: 'SC',      label: 'SC原油',  src: 'desk', desk: ['SC', 'futures'],      digits: 1, unit: '¥' },
-      { id: 'BRENT',   label: '布伦特',  src: 'desk', desk: ['BRENT', 'spot'],      digits: 2, unit: '$' },
-      { id: 'WTI',     label: 'WTI',    src: 'desk', desk: ['WTI', 'spot'],        digits: 2, unit: '$' },
-      { id: 'NAPHTHA', label: '石脑油',  src: 'desk', desk: ['NAPHTHA', 'spot'],   digits: 0, unit: '¥' },
-      { id: '@GC.1',   label: 'COMEX黄金', src: 'cnbc', digits: 1, unit: '$' },
-      { id: '@HG.1',   label: 'COMEX铜',  src: 'cnbc', digits: 3, unit: '$' },
-      { id: '@SI.1',   label: 'COMEX银',  src: 'cnbc', digits: 3, unit: '$' },
-      { id: '@BZ.1',   label: '布伦特(CNBC)', src: 'cnbc', digits: 2, unit: '$',
-        note: '与你的库口径不同，留作对照' }
-    ]
   }
 ];
 
-/* 顶栏跑马灯挑哪几项（顺序即显示顺序） */
-const MARQUEE_PICK = ['.DXY', 'US10Y', 'USDCNY', 'sh000001', '.SPX', '.VIX', 'hkHSI', 'OIL_DESK'];
+/* 顶栏跑马灯挑哪几项（顺序即显示顺序）。
+   甲醇放在这里是有意的：它是聚酯链之外、但最能提前反映能化成本与 MTO 利润的一条线。 */
+const MARQUEE_PICK = ['.DXY', 'US10Y', 'USDCNY', 'sh000001', '.SPX', '.VIX', 'hkHSI', 'MA0', 'OIL_DESK'];
 
 /* 腾讯迷你趋势取几根日线 */
 const SPARK_DAYS = 60;
@@ -157,26 +233,34 @@ const SPARK_DAYS = 60;
 const FOCUS_DAYS = 120;
 
 /* --------------------------------------------------------------------------
-   0c. AI 代理 & 宏观速览 —— 前端绝不放密钥，走 Cloudflare Worker
-   部署：tools/cloudflare_worker.js（wrangler 部署后）
-   url  填 worker 发布地址，如 https://your-name.workers.dev
-   token 填 wrangler secret put SHARED_TOKEN 时的那串
-   留 null / 空 = 宏观速览按「未配置」降级为灰底提示，不调任何 API、不花钱。
+   0c. AI 情报分析 —— 两种模式，默认走「静态」这条
+   ──────────────────────────────────────────────────────────────────────────
+   【静态，默认】tools/ai_digest.py 在 GitHub Actions 上跑，把当天宏观情报压成
+   一段粗分析写进 data/ai_digest.json 的 macro_brief。前端只是读文件：
+   页面零 API 调用、零密钥暴露、一次浏览不花一分钱。这是最省 token 的路子 ——
+   token 只花在「一天一次的判断」上，不花在「每次刷新的搬运」上。
+   【实时，可选】想点按钮就现问，需要有个持钥匙的服务端，见 AI_PROXY。
+   配了 AI_PROXY.url 就会在静态版之上再补一次实时压缩；没配就只用静态版。
    -------------------------------------------------------------------------- */
 const AI_PROXY = { url: null, token: null };
 
-/* 全球市场分组默认是否折叠。false = 六组全部展开 —— 宏观信息一屏见底，
-   不要让「利率与美元」「商品」这些硬数据藏在折叠行里；
-   想收哪个组，用户自己点组标题收，选择记在会话里。 */
+/* 全球市场分组默认是否折叠。false = 全部分组展开 —— 硬数据不要藏在折叠行里；
+   想收哪个组，用户自己点组标题收，选择记在 localStorage 里，下次打开还是他排的样子。 */
 const WORLD_COLLAPSED_DEFAULT = false;
 const WORLD_EXPAND_HINT = ['a', 'us'];
 
-/* 宏观速览：压缩多少条、覆盖哪些频道、触发阈值。
+/* 情报分析（静态产物）渲染规则 */
+const MACRO_BRIEF = {
+  maxPoints: 5,          // 最多渲染几条要点（产物里多的截掉）
+  showTokens: true       // 是否显示这一段的 token 成本 —— 让它一眼可见「花了多少」
+};
+
+/* 实时压缩（仅 AI_PROXY 已配置时生效）：压缩多少条、覆盖哪些频道、触发阈值。
    maxNews 只喂【标题】，不带正文摘要 —— 所以可以比原来多带一些，
    让速览真的覆盖一整天的动静，而 token 反而更省。 */
 const MACRO_OVERVIEW = {
   maxPoints: 5,                 // 最多输出几条要点
-  maxNews: 20,                  // 每次最多喂多少条标题进上下文
+  maxNews: 24,                  // 每次最多喂多少条标题进上下文
   channels: ['macro', 'bonds', 'fed', 'chain'],  // 只从这些频道取
   cooldownMs: 12 * 60e3,        // 两次调用之间的最小间隔（省 token）
   maxDaily: 30                  // 单日最多调用次数（省 token 天顶）
@@ -184,21 +268,31 @@ const MACRO_OVERVIEW = {
 
 /* --------------------------------------------------------------------------
    3. 情报流频道
+   顺序即显示顺序，也就是「谁抢到用户眼睛」的顺序。
+   宏观排第二是有意的：它是这一屏里唯一能解释「为什么今天整条链一起动」的东西，
+   而产业链频道回答的是「哪一环在动」。先因后果。
    -------------------------------------------------------------------------- */
 const NEWS_CHANNELS = [
   { id: 'all', label: '全部', kw: [] },
+  {
+    id: 'macro', label: '宏观',
+    kw: ['国常会', '国务院', '发改委', '财政部', '政治局', '中央经济工作会议', '政策', '刺激',
+         '稳增长', '专项债', '特别国债', '赤字率', '财政政策', '货币政策', '央行', '降准', '降息',
+         '加息', 'MLF', 'LPR', '逆回购', '资金面', '银行间', '社融', 'M2', '信贷', '人民币',
+         '汇率', '美元指数', '通胀', '通缩', 'GDP', '增速', '关税', '出口', '进口', '外贸',
+         '就业', '非农', '美国CPI', 'CPI', 'PPI', 'PMI', '社零', '社会消费品零售', '消费',
+         '零售', '内需', '促消费', '以旧换新', '补贴', '房地产', '制造业', '工业增加值',
+         '固定资产投资', '美联储', 'FOMC', '鲍威尔', '美债', '国债', '收益率', '债市',
+         '欧元区', '欧洲央行', '日本央行', 'ECB', 'BOJ', '地缘', '制裁', 'OPEC', '减产',
+         '库存', 'EIA']
+  },
   {
     id: 'chain', label: '产业链',
     kw: ['原油', '石脑油', '汽油', '柴油', '航煤', '芳烃', '对二甲苯', 'PX', 'PTA', '精对苯二甲酸',
          '乙二醇', 'MEG', '聚酯', '瓶片', 'PET', '短纤', '涤纶', '长丝', 'POY', 'FDY', 'DTY',
          '切片', '加工差', '加工费', '现金流', '检修', '装置', '开工', '负荷', '仓单', '库存',
-         '郑商所', '大商所', '上期所', '上期能源', '化纤', '纺织原料', '再生', 'OPEC', '减产', '炼厂']
-  },
-  {
-    id: 'macro', label: '宏观消费',
-    kw: ['社会消费品零售', '社零', '消费', '零售', 'CPI', 'PPI', 'PMI', '内需', '促消费', '以旧换新',
-         '出口', '进口', '外贸', 'GDP', '工业增加值', '固定资产投资', '房地产', '就业', '关税',
-         '补贴', '专项债', '社融', 'M2', '信贷']
+         '郑商所', '大商所', '上期所', '上期能源', '化纤', '纺织原料', '再生', '炼厂', 'OPEC',
+         '甲醇', '苯乙烯', 'PVC', '纯碱', '玻璃', '尿素', '燃料油', '沥青']
   },
   {
     id: 'apparel', label: '服装',

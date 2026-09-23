@@ -23,7 +23,10 @@ const sleep = ms => new Promise(r => setTimeout(r, ms));
 fs.mkdirSync(OUT, { recursive: true });
 
 const chrome = spawn('/Applications/Google Chrome.app/Contents/MacOS/Google Chrome', [
-  '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
+  // ⚠ --no-proxy-server 不能删。这台机器设了 HTTPS_PROXY=http://127.0.0.1:51990，
+  // Chrome 会把它当系统代理，连 127.0.0.1:8791 都走代理，于是页面变成
+  // chrome-error://chromewebdata/，扫描器对着一个错误页量半天「无溢出」。
+  '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars', '--no-proxy-server',
   `--remote-debugging-port=${PORT}`, '--user-data-dir=/tmp/cdp-overflow', 'about:blank'
 ], { stdio: 'ignore' });
 

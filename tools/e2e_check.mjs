@@ -7,8 +7,15 @@ const PORT = 9333;
 const { spawn } = await import('node:child_process');
 const CHROME = '/Applications/Google Chrome.app/Contents/MacOS/Google Chrome';
 
+/* ⚠ 必须 --no-proxy-server。
+   这台机器设了 HTTPS_PROXY=http://127.0.0.1:51990，Chrome 会把它当成系统代理，
+   于是连 http://127.0.0.1:8791/ 也走代理 → 代理不认这个端口 → 页面变成
+   chrome-error://chromewebdata/ → 所有断言读到 .card 数量为 0。
+   现象很像「本地服务没起来」，实际是代理把 loopback 也吃掉了。
+   顺带：外网直连本身是通的（qt.gtimg.cn 直连 200），所以关掉代理不影响取数。 */
 const chrome = spawn(CHROME, [
   '--headless=new', '--disable-gpu', '--no-sandbox', '--hide-scrollbars',
+  '--no-proxy-server',
   `--remote-debugging-port=${PORT}`, '--window-size=1500,900',
   '--user-data-dir=/tmp/cdp-desk-profile', URL_
 ], { stdio: 'ignore' });
@@ -136,10 +143,13 @@ ok('港股指数在面板里', ((await ev("document.getElementById('world').text
 ok('美股指数在面板里', ((await ev("document.getElementById('world').textContent")).v || '').includes('纳斯达克'));
 ok('美债收益率在面板里', /美债10年/.test((await ev("document.getElementById('world').textContent")).v || ''));
 ok('美元指数在面板里', ((await ev("document.getElementById('world').textContent")).v || '').includes('美元指数'));
+/* 2s10s 是派生利差，源不给历史序列 → 它现在是 .msnap 快照条，不再是 .mtile。
+   所以这里必须用 [data-wid] 找，而不是 .mtile —— 用错选择器会得到一句
+   「找不到」的假失败，掩盖真实问题。 */
 ok('2s10s 利差已算出',
-   /-?\d+\.\d{3}pp/.test((await ev(`(()=>{const t=[...document.querySelectorAll('#world .mtile')]
+   /-?\d+\.\d{3}pp/.test((await ev(`(()=>{const t=[...document.querySelectorAll('#world [data-wid]')]
       .find(x=>x.textContent.includes('2s10s'));return t?t.textContent:'找不到'})()`)).v || ''),
-   await ev(`(()=>{const t=[...document.querySelectorAll('#world .mtile')]
+   await ev(`(()=>{const t=[...document.querySelectorAll('#world [data-wid]')]
       .find(x=>x.textContent.includes('2s10s'));return t?t.textContent.replace(/\\s+/g,' '):'找不到'})()`));
 ok('指数有迷你趋势', (await ev("document.querySelectorAll('#world .mtile svg').length")).v >= 5,
    '实际 ' + (await ev("document.querySelectorAll('#world .mtile svg').length")).v);
@@ -148,30 +158,53 @@ ok('跑马灯含美债10年', ((await ev("document.getElementById('marquee').tex
 ok('宏观条有数值', (await ev("document.querySelectorAll('#marquee .mq .v').length")).v >= 5,
    '实际 ' + (await ev("document.querySelectorAll('#marquee .mq .v').length")).v);
 
+// ---------- 新增品类 ----------
+for (const [label, key] of [['全球股指', '日经225'], ['聚酯链现货', 'POY 长丝'],
+                            ['能化期货', '甲醇 MA'], ['黑色与有色', '螺纹钢 RB'],
+                            ['纺织原料', '棉花 CF']]) {
+  ok(label + ' 已在面板里', ((await ev("document.getElementById('world').textContent")).v || '').includes(key));
+}
+ok('分组 >= 11 个', (await ev("document.querySelectorAll('#world .mgroup').length")).v >= 11,
+   '实际 ' + (await ev("document.querySelectorAll('#world .mgroup').length")).v);
+ok('快照条 >= 15 条', (await ev("document.querySelectorAll('#world .msnap').length")).v >= 15,
+   '实际 ' + (await ev("document.querySelectorAll('#world .msnap').length")).v);
+
 // ---------- 在线复现的仓单 ----------
 ok('仓单分组已渲染', ((await ev("document.getElementById('world').textContent")).v || '').includes('仓单'));
 ok('仓单瓦片有 4 个', (await ev(`(()=>{const g=[...document.querySelectorAll('#world .mgroup')]
    .find(x=>x.textContent.includes('仓单'));return g?g.querySelectorAll('.mtile').length:0})()`)).v === 4);
 ok('仓单单位是万吨', ((await ev("document.getElementById('world').textContent")).v || '').includes('万吨'));
 
-/* 三种「没有」必须看起来不同，否则都会被读成「还没加载完」：
-     源不可达   → 红底 .state-error
-     没有历史序列 → 虚线框 .state-dashed
-   这里验第二种：点开一个只有当日快照、没有历史序列的项（美债/VIX 这类 CNBC 项）。 */
-const noHist = (await ev(`(async () => {
-  const t = [...document.querySelectorAll('#world .mtile')]
-    .find(x => x.dataset.wid === 'US10Y' || x.dataset.wid === '.VIX');
-  if (!t) return { err: '找不到无历史序列的项' };
-  t.click();
-  await new Promise(r => setTimeout(r, 3000));
-  const st = document.getElementById('wfocusState');
-  const res = { cls: st ? st.className : '', text: st ? st.textContent.slice(0, 24) : '' };
-  t.click();                                   // 收起，别影响后面的断言
-  await new Promise(r => setTimeout(r, 600));
-  return res;
+/* 快照项的新契约（旧契约已经作废，别按旧文档验）：
+   数据源只给当日快照、没有历史序列的项（美债、VIX、CNBC 的全球股指与商品）
+   **根本不该长得像点得开**。它们渲染成 .msnap 只读快照条：
+     · 不是 <button>、没有 tabindex；
+     · 点下去不打开聚焦面板（不会再弹「只给当日快照」那一屏空白）。
+   旧的「点开显示 .state-dashed 虚线框」那条断言已删除 —— 那条路径现在是不可达的
+   正常路径，留着它只会让人以为功能坏了。 */
+const snapProbe = (await ev(`(async () => {
+  const s = [...document.querySelectorAll('#world .msnap')];
+  const target = s.find(x => x.dataset.wid === 'US10Y' || x.dataset.wid === '.VIX');
+  if (!target) return { err: '找不到快照条（US10Y / .VIX）', n: s.length };
+  const host = document.getElementById('wfocusHost');
+  const before = host ? host.hidden : null;
+  target.click();
+  await new Promise(r => setTimeout(r, 900));
+  return {
+    n: s.length,
+    tag: target.tagName,
+    tabindex: target.hasAttribute('tabindex'),
+    before,
+    after: host ? host.hidden : null
+  };
 })()`)).v;
-ok('无历史序列的项显示虚线框（不是灰字）',
-   /state-dashed/.test((noHist && noHist.cls) || ''), (noHist && noHist.cls) || JSON.stringify(noHist));
+ok('快照项不是按钮', (snapProbe && snapProbe.tag) === 'SPAN',
+   (snapProbe && snapProbe.tag) || JSON.stringify(snapProbe));
+ok('快照项没有 tabindex', snapProbe && snapProbe.tabindex === false);
+ok('点快照项不打开聚焦面板', snapProbe && snapProbe.after === true && snapProbe.before === true,
+   'hidden ' + (snapProbe && snapProbe.before) + ' → ' + (snapProbe && snapProbe.after));
+ok('快照条带「快照」前缀', (await ev("document.querySelectorAll('#world .msnaps .snap-lb').length")).v >= 1,
+   '实际 ' + (await ev("document.querySelectorAll('#world .msnaps .snap-lb').length")).v);
 
 // ---------- 1 分钟线 ----------
 ok('周期按钮含 1分', ((await ev("document.getElementById('perTabs').textContent")).v || '').includes('1分'));
@@ -198,6 +231,35 @@ if (aiCode === 200) {
      /\d+\s*tokens/.test((await ev("((document.querySelector('#ai .ai-h')||{}).textContent||'')")).v || ''),
      ((await ev("((document.querySelector('#ai .ai-h')||{}).textContent||'')")).v || '').replace(/\s+/g, ' '));
 }
+
+/* ---------- 情报分析卡（这一轮的主功能，必须单独断言）----------
+   三级降级：macro_brief → headlines → 整卡隐藏。
+   三条都断言，是为了区分「功能坏了」和「产物还没升级」——
+   前者 macroCard 该显示却不显示，后者本来就该显示 headlines 兜底。
+   只断言「卡片显示」是不够的：卡片显示但正文是「正在读取…」也满足它。 */
+const mbShown = (await ev("!document.getElementById('macroCard').hidden")).v === true;
+const mbText = ((await ev("document.getElementById('macroBody').textContent")).v || '').trim();
+ok('情报分析卡已显示', mbShown, mbShown ? '可见' : '整卡隐藏');
+if (mbShown) {
+  ok('情报分析正文已渲染（不是「正在读取…」）',
+     mbText.length >= 20 && !/^正在读取/.test(mbText), mbText.length + ' 字');
+  ok('情报分析有证据条目',
+     (await ev("document.querySelectorAll('#macroBody .mb-pts .mi').length")).v >= 1,
+     (await ev("document.querySelectorAll('#macroBody .mb-pts .mi').length")).v + ' 条');
+  ok('情报分析标了取材量与时间',
+     /基于当日\s*\d+\s*条标题\s*·\s*\d{4}-\d{2}-\d{2}/.test(
+       ((await ev("document.getElementById('macroNote').textContent")).v || '')),
+     ((await ev("document.getElementById('macroNote').textContent")).v || '').replace(/\s+/g, ' ').slice(0, 44));
+  /* 结论句只在 macro_brief 到位时才有。没有就说「今日情报」兜底 ——
+     这两种都算正常，所以断言的是「二者必居其一」，而不是硬要求判断句。 */
+  ok('情报分析标注了结论来源',
+     /AI 情报分析|今日情报/.test(((await ev("document.querySelector('#macroBody .mb-foot').textContent")).v || '')),
+     ((await ev("document.querySelector('#macroBody .mb-foot').textContent")).v || '').replace(/\s+/g, ' ').slice(0, 30));
+  ok('情报分析写了 token 花费',
+     /tokens/.test(((await ev("document.querySelector('#macroBody .mb-foot').textContent")).v || '')),
+     ((await ev("document.querySelector('#macroBody .mb-foot').textContent")).v || '').replace(/\s+/g, ' ').slice(-40));
+}
+
 ok('日历过期守卫为空（数据未过期）',
    ((await ev("document.getElementById('calWarn').textContent")).v || '') === '');
 
@@ -323,15 +385,19 @@ ok('品牌标记是实色（不渐变不发光）', (await ev(`(() => {
   return s.backgroundImage === 'none' && (s.boxShadow === 'none' || s.boxShadow === '');
 })()`)).v === true);
 
-/* 31 张瓦片必须严格等高。这一条是被真实观察逼出来的：
-   改之前实测同时存在 67 / 88 / 97 / 118 四种高度，行与行之间基线全错开。 */
-ok('31 张瓦片严格等高', (await ev(`(() => {
-  const hs = [...document.querySelectorAll('#world .mtile')].map(t => Math.round(t.getBoundingClientRect().height));
+/* 可点瓦片必须严格等高。这一条是被真实观察逼出来的：
+   改之前实测同时存在 67 / 88 / 97 / 118 四种高度，行与行之间基线全错开。
+   ⚠ 只比【展开分组】里的瓦片：折叠态本来就是另一套紧凑样式（48px 一行摘要），
+     把它算进来会得到一个永远为假的断言。 */
+ok('可点瓦片严格等高', (await ev(`(() => {
+  const hs = [...document.querySelectorAll('#world .mgroup[data-open="1"] .mtile')]
+    .map(t => Math.round(t.getBoundingClientRect().height));
   if (hs.length < 10) return false;
   return new Set(hs).size <= 2;      // 允许 1px 的亚像素误差
 })()`)).v === true,
    (await ev(`(() => {
-     const hs = [...document.querySelectorAll('#world .mtile')].map(t => Math.round(t.getBoundingClientRect().height));
+     const hs = [...document.querySelectorAll('#world .mgroup[data-open="1"] .mtile')]
+       .map(t => Math.round(t.getBoundingClientRect().height));
      return '高度种类 ' + new Set(hs).size + '：' + [...new Set(hs)].sort((a,b)=>a-b).join('/');
    })()`)).v);
 
@@ -428,6 +494,21 @@ for (const [s, n, e] of checks) console.log(`${s}  ${n}${e ? '  → ' + e : ''}`
 console.log('\n================ 控制台输出 ================');
 console.log(logs.length ? logs.slice(0, 25).join('\n') : '干净，无 error / warning');
 
+/* 汇总 + 退出码。
+   以前这个脚本只逐条打印、从不汇总，而且末尾无条件 process.exit(0)——
+   于是「84 PASS / 0 FAIL」和「40 PASS / 44 FAIL」在终端里长得一样长，
+   接 CI 也永远绿灯。汇总和退出码是这套断言唯一能被自动消费的出口。 */
+const nPass = checks.filter(c => c[0] === 'PASS').length;
+const nWarn = checks.filter(c => c[0] === 'WARN').length;
+const nFail = checks.filter(c => c[0] === 'FAIL').length;
+console.log('\n================ 汇总 ================');
+console.log(`${nPass} PASS / ${nWarn} WARN / ${nFail} FAIL  （共 ${checks.length} 条）`);
+console.log(`控制台 error/warning: ${logs.length} 条`);
+if (nFail) {
+  console.log('\n失败项：');
+  for (const [s, n, e] of checks) if (s === 'FAIL') console.log(`  ✗ ${n}${e ? '  → ' + e : ''}`);
+}
+
 ws.close();
 chrome.kill();
-process.exit(0);
+process.exit(nFail ? 1 : 0);

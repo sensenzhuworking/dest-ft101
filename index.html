@@ -125,10 +125,13 @@
   <!-- ======================= 右栏 ======================= -->
   <aside class="col-side">
 
-    <!-- 宏观速览：只在 config.js 配好 AI_PROXY 后才出现；未配置时保持隐藏零噪音 -->
+    <!-- 情报分析：对「今天滚动的宏观情报」做一次粗分析。
+         内容来自 data/ai_digest.json 的 macro_brief —— 由 GitHub Actions 上的
+         tools/ai_digest.py 生成，页面只是读文件：零 API 调用、零密钥暴露。
+         产物缺失时整卡隐藏，不留「未启用」占位噪音。 -->
     <section class="card macro-card" id="macroCard" hidden aria-labelledby="h-macro">
       <div class="card-h">
-        <h2 id="h-macro">宏观速览</h2>
+        <h2 id="h-macro">情报分析</h2>
         <span class="note" id="macroNote">—</span>
       </div>
       <div id="macroBody"><p class="state" style="border:0;margin:0">正在读取…</p></div>

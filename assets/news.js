@@ -68,6 +68,7 @@ const News = (() => {
       const title = (x.title || '').trim();
       const summary = (x.summary || '').trim();
       if (!title && !summary) continue;
+      const channels = matchChannels(title + ' ' + summary);
       out.push({
         code: x.code,
         title: title || summary.slice(0, 60),
@@ -75,7 +76,9 @@ const News = (() => {
         showTime: x.showTime || '',
         sort: +x.realSort || 0,
         isNew: false,
-        channels: matchChannels(title + ' ' + summary)
+        // 宏观条目在渲染时会多带一行摘要、多一条常驻信号边 —— 见 render()
+        isMacro: channels.has('macro'),
+        channels
       });
     }
     return out;
@@ -168,10 +171,16 @@ const News = (() => {
       const first = [...x.channels].find(c => c !== 'all');
       const chTag = first ? '<span class="ch">' + esc(chLabel(first)) + '</span>' : '';
       const newTag = x.isNew ? '<span class="new">新</span>' : '';
-      return '<a class="ni' + (x.isNew ? ' fresh' : '') + '" href="' + url + '"' +
+      /* 宏观条目补一行摘要（CSS 截到两行）。摘要是编辑写的导语，
+         比标题多出来的那点信息正好够判断「这条值不值得点开」。
+         只给宏观：全部条目都加摘要，扫读节奏会被拖垮 —— 那样反而更难看。 */
+      const sum = (x.isMacro && x.summary && x.summary !== x.title)
+        ? '<p class="s">' + highlight(x.summary) + '</p>' : '';
+      return '<a class="ni' + (x.isNew ? ' fresh' : '') + (x.isMacro ? ' macro' : '') +
+             '" href="' + url + '"' +
              ' target="_blank" rel="noopener noreferrer">' +
              '<span class="t">' + esc(fmtWhen(x.showTime)) + newTag + chTag + '</span>' +
-             '<p class="h">' + highlight(x.title) + '</p></a>';
+             '<p class="h">' + highlight(x.title) + '</p>' + sum + '</a>';
     }).join('');
     listEl.innerHTML = html;
     paintMeta(list.length);
