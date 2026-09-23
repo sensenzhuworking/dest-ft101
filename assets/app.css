@@ -1,55 +1,91 @@
 /* ==========================================================================
-   聚酯链驾驶舱 · 深色底 + 帝国理工蓝
-   色值取自 Imperial College London 官方视觉规范：
-     Imperial Blue #003E74 (PMS 541) · Navy #002147 (PMS 539)
-     Process Blue #006EAF · Pool Blue #0091D4 · Seaglass #009CBC
-     Cool Grey #9D9D9D · Dark Grey #373A36
-   深色底上 #003E74 对比度只有 1.8:1，不能当文字色，所以拆成三层：
-     填充/描边用 #003E74，正文与强调用 #0091D4（对 #0e1116 是 5.4:1，达标）
+   聚酯链驾驶舱 · 冷白金 + 亮金信号 —— 保时捷式克制金
+
+   设计语言：
+   1. 骨架：纯平卡片。分区靠「面差 + 大圆角 + 间距」，卡片不描边、无阴影、
+      零材质；1px 只留给列表分隔线（--line）。
+   2. 版面：单字体（-apple-system）承担所有层级 —— 字号四档（写进下面 token）
+      + 字重 400/600 + 紧字距，不靠颜色抬层级。
+   3. 颜色：主骨骼冷白金（文字/数字/分隔=冷白金，去暖去冷蓝，中性偏白），
+      单一强调色 = 亮金（保时捷式克制，只在最贵的地方出现）：
+      焦点环、选中、品牌、放大态边框、强调词、宏观速览 tag。
+      金不做背景、不装饰；红=涨、绿=跌（低饱和）。
+   4. 网格：8pt 间距（--s1..--s4）；数值等宽右对齐。
+
    涨红跌绿（中国习惯）—— 全站统一，不因组件而异
    ========================================================================== */
 
 :root {
-  --bg:        #0e1116;
-  --bg-2:      #12161d;
-  --panel:     #161a21;
-  --panel-2:   #1b2028;
-  --panel-3:   #212733;
-  --line:      rgba(255, 255, 255, .07);
-  --line-2:    rgba(255, 255, 255, .13);
+  /* 面：中性近黑，明度层级拉开（从整页到卡片逐层抬升） */
+  --bg:        #16171e;   /* 整页：暮光白金底，明显比近黑亮一个平台 */
+  --bg-2:      #1d1e26;   /* 顶栏 / 底栏 */
+  --panel:     #262832;   /* 卡片面：亮铂、不刺眼，与整页拉开清晰层次 */
+  --panel-2:   #343544;   /* 行内块：节点 / 瓦片 / 价差卡 */
+  --panel-3:   #464856;   /* 悬停 / 放大态容器 */
+  --border:    rgba(255, 255, 255, .11);   /* 只给极少数真需要的边 */
+  --line:      rgba(255, 255, 255, .08);   /* 内部发丝分隔线 */
+  --line-2:    rgba(255, 255, 255, .19);
 
-  --fg:        #e6eaf2;
-  --fg-2:      #8a93a5;
-  --fg-3:      #5a6376;
+  /* 质感：光、影、发丝。真正的「高级」是看得见的一层光，不是纯平的化验室。
+     内上缘一道极浅的光 + 深而柔的投影，让卡片“坐”在暗室里，而不是浮在纯黑上。 */
+  --hi-top:   rgba(255, 255, 255, .05);   /* 卡片内上缘光（压“浮空盒子”感） */
+  --hi-top-2: rgba(255, 255, 255, .09);    /* 更强的内上缘光：按钮 / 瓦片悬停 */
+  --sh-card:  0 1px 0 rgba(255,255,255,.022) inset,
+              0 24px 64px -26px rgba(0,0,0,.62),
+              0 6px 18px -10px rgba(0,0,0,.45);   /* 坐下卡片 */
+  --sh-pop:   0 34px 90px -32px rgba(0,0,0,.85),
+              0 12px 30px -16px rgba(0,0,0,.55);  /* 抬起层：聚焦卡 / 弹层 */
+  --amb: radial-gradient(1100px 620px at 76% -8%, rgba(246,205,114,.08), transparent 62%),
+         radial-gradient(900px 560px at 2% -6%, rgba(79,191,135,.05), transparent 55%);
 
-  --up:        #f0554e;
-  --down:      #27c08a;
-  --flat:      #8a93a5;
+  /* 文字三档：冷白金主骨骼 —— 上到 #fff 下到可读灰，都比旧的暖灰更高一档。
+     三档明度都统一抬高一点，避免小字发灰发死（死灰是廉价感的头号来源）。 */
+  --fg:        #ffffff;   /* 主文字：纯白金 —— 冷到发亮，零灰 */
+  --fg-2:      #d7dbe4;   /* 次文字：冷白金，亮一档 */
+  --fg-3:      #bcc2cd;   /* 说明：亮冷灰，4.5:1+，不再死气沉沉 */
 
-  /* 帝国理工蓝三层 */
-  --ic:        #0091d4;   /* Pool Blue —— 文字/强调，对比度 5.4:1 */
-  --ic-mid:    #006eaf;   /* Process Blue —— 次级、悬停、描边 */
-  --ic-deep:   #003e74;   /* Imperial Blue —— 填充 */
-  --navy:      #002147;   /* Navy —— 深填充 */
-  --seaglass:  #009cbc;   /* Seaglass —— 用于需要区分的第二个节点 */
-  --grey:      #9d9d9d;   /* Cool Grey —— MA20 */
+  --up:        #f0725f;   /* 低饱和红（提亮，衬新白金底更利落） */
+  --down:      #3dcd95;   /* 低饱和绿（提亮，与红同明度） */
+  --flat:      #b5bbc4;
 
-  --ic-bg:     rgba(0, 145, 212, .13);
-  --ic-bg-2:   rgba(0, 145, 212, .07);
-  --up-bg:     rgba(240, 85, 78, .13);
-  --down-bg:   rgba(39, 192, 138, .13);
-  --flat-bg:   rgba(255, 255, 255, .06);
+  /* 单一强调色 = 亮金（保时捷式香槟金）：名副其实的「亮」，只做信号，不铺背景 */
+  --ic:        #f6cd72;   /* 亮金：保时捷式香槟金，名副其实的「亮」，只做信号 */
+  --ic-mid:    #f0ba52;   /* 亮金深一档：悬浮线、渐变底 */
+  --ic-deep:   #df9b31;   /* 亮金最深：实心 tag 用 */
+  --seaglass:  #7fb8c9;   /* 冷青点缀：仅仓单迷你线等需要中性义的场景 */
+  --grey:      #b5bbc4;   /* 中性灰：与冷白金主骨骼同族 */
+
+  --ic-bg:     rgba(246, 205, 114, .17);
+  --ic-bg-2:   rgba(246, 205, 114, .09);
+  --up-bg:     rgba(240, 104, 92, .16);
+  --down-bg:   rgba(59, 203, 147, .16);
+  --flat-bg:   rgba(255, 255, 255, .09);
+  --sel:       rgba(246, 205, 114, .18);   /* 选中 = 亮金调胶囊 */
 
   /* 兼容旧变量名，避免遗漏 */
   --amber: var(--ic);
   --amber-bg: var(--ic-bg);
-  --cyan: var(--grey);
 
-  --r:    10px;
-  --r-sm: 6px;
+  /* 实心金钮：单一纯色、饱和、有分量的宫殿金。不渐变、不荧白、不发灰。
+     够纯度才能压住白字 —— 土的是「浅金+渐变」，不是金本身。
+     质感只来自顶缘一条细细的高光，像金属从上部受光。 */
+  --gold-btn:   #e8ac2f;
+  --gold-btn-h: #f4bb40;   /* hover：多一分亮度 */
+  --gold-btn-p: #d59827;   /* active：压深一分 */
+  --gold-text-shadow: 0 0 6px rgba(255,255,255,.4), 0 1px 1px rgba(90,50,0,.22);   /* 白字透亮：柔白光晕为主体，仅留一缕压边 */
+  --cyan: var(--seaglass);
+  --navy: #b97f2a;
+
+  --r:    16px;
+  --r-sm: 10px;
   --mono: ui-monospace, SFMono-Regular, "SF Mono", Menlo, Consolas, "Liberation Mono", monospace;
   --sans: -apple-system, BlinkMacSystemFont, "PingFang SC", "Hiragino Sans GB",
           "Microsoft YaHei", "Helvetica Neue", Arial, sans-serif;
+
+  /* 8pt 间距网格 + 四档字阶（单字体靠字号 / 字重 / 字距拉开层级）。
+     收拢成：11px 说明 / 12px 正文 / 13px 数值 / 16px 焦点数值；主力锚点 32 独占。 */
+  --s1: 8px; --s2: 16px; --s3: 24px; --s4: 32px;
+  --fs-cap: 11px;  --fs-body: 12px;  --fs-val: 13px;  --fs-focus: 16px;  --fs-hero: 32px;
 }
 
 * { box-sizing: border-box; }
@@ -58,11 +94,16 @@ html { color-scheme: dark; }
 
 body {
   margin: 0;
-  background: var(--bg);
+  /* 暗室氛围：顶角两团极暗的环境光（金 / 青），往下收成深底。
+     不再是死黑，卡片能“被光托着”。 */
+  background:
+    var(--amb),
+    linear-gradient(180deg, #07080c 0%, #0a0a0c 46%, #08090b 100%);
+  background-attachment: fixed;
   color: var(--fg);
   font-family: var(--sans);
-  font-size: 13px;
-  line-height: 1.6;
+  font-size: var(--fs-body);
+  line-height: 1.55;
   -webkit-font-smoothing: antialiased;
   min-height: 100dvh;
 }
@@ -78,13 +119,23 @@ body {
   overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
 }
 
+/* 全局细节回声：选中色 + 所有可点元素统一的悬停节奏 */
+::selection { background: rgba(246,205,114,.32); color: #fff; }
+button, [role="button"] { touch-action: manipulation; }
+
 /* ---------- 顶栏 ---------------------------------------------------------- */
 
 .topbar {
   display: flex; align-items: center; gap: 14px;
-  height: 44px; padding: 0 12px;
-  background: var(--bg-2);
-  border-bottom: 1px solid var(--line);
+  height: 48px;
+  padding: 0 calc(14px + env(safe-area-inset-right)) 0 calc(14px + env(safe-area-inset-left));
+  /* 半透明 + 毛玻璃：内容从底下滑过去，顶栏像浮在页面上的一层 */
+  background: rgba(24, 25, 33, .84);
+  backdrop-filter: blur(10px) saturate(1.06);
+  -webkit-backdrop-filter: blur(10px) saturate(1.06);
+  /* 全页唯一一道金线：顶栏签名式分割，其余处不起线 */
+  border-bottom: 1px solid rgba(246, 205, 114, .36);
+  box-shadow: 0 14px 34px -22px rgba(246, 205, 114, .32);
   position: sticky; top: 0; z-index: 30;
 }
 
@@ -92,9 +143,10 @@ body {
 .brand .mark {
   width: 9px; height: 9px; border-radius: 2px;
   background: linear-gradient(180deg, var(--ic) 0 50%, var(--ic-deep) 50% 100%);
+  box-shadow: 0 0 10px rgba(246,205,114,.6);
 }
-.brand b { font-size: 13px; font-weight: 500; letter-spacing: .3px; }
-.brand span { font-size: 11px; color: var(--fg-3); }
+.brand b { font-size: var(--fs-body); font-weight: 600; letter-spacing: 0; }
+.brand span { font-size: var(--fs-cap); color: var(--fg-3); }
 
 .marquee {
   display: flex; align-items: center; gap: 14px;
@@ -105,74 +157,134 @@ body {
           mask-image: linear-gradient(90deg, transparent, #000 14px, #000 calc(100% - 14px), transparent);
 }
 .marquee::-webkit-scrollbar { display: none; }
-.mq { display: inline-flex; align-items: baseline; gap: 5px; font-size: 11.5px; }
+.mq { display: inline-flex; align-items: baseline; gap: 6px; font-size: var(--fs-body); }
 .mq .k { color: var(--fg-3); }
 .mq .v { font-family: var(--mono); color: var(--fg); }
 .mq .b {
-  font-size: 9px; line-height: 1; padding: 2px 3px; border-radius: 2px;
-  background: var(--ic-bg); color: var(--ic); font-family: var(--mono);
+  font-size: 11px; line-height: 1.1; padding: 2px 5px; border-radius: 4px;
+  background: var(--gold-btn); color: #fff; font-family: var(--mono);
+  font-weight: 700; text-shadow: var(--gold-text-shadow);
 }
-.mq .b.d { background: var(--flat-bg); color: var(--fg-3); }
+.mq .b.d { background: var(--flat-bg); color: var(--fg-3); text-shadow: none; }
 
 .topmeta { display: flex; align-items: center; gap: 10px; flex: none; }
-#clock { font-family: var(--mono); font-size: 11.5px; color: var(--fg-2); }
+/* 时钟前一颗呼吸的实时灯：数据每活一秒它就闪一下，暗示“这台表在走” */
+#clock {
+  position: relative; padding-left: 12px;
+  font-family: var(--mono); font-size: var(--fs-body); color: var(--fg-2);
+}
+#clock::before {
+  content: ""; position: absolute; left: 0; top: 50%; transform: translateY(-50%);
+  width: 6px; height: 6px; border-radius: 50%;
+  background: var(--down); box-shadow: 0 0 7px rgba(62,196,137,.75);
+  animation: livePulse 2.4s ease-in-out infinite;
+}
+@keyframes livePulse {
+  0%, 100% { opacity: .45; }
+  50% { opacity: 1; }
+}
 
 .btn {
-  font: inherit; font-size: 11.5px; color: var(--fg-2);
-  background: transparent; border: 1px solid var(--line-2);
-  border-radius: var(--r-sm); padding: 3px 9px; cursor: pointer;
-  transition: color .12s, border-color .12s;
+  font: inherit; font-size: var(--fs-body); color: #fff;
+  font-weight: 700; letter-spacing: .01em;
+  background: var(--gold-btn);
+  border: 0; border-radius: var(--r-sm); padding: 4px 11px; cursor: pointer;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 1px 2px rgba(90,55,0,.25);
+  text-shadow: var(--gold-text-shadow);
+  transition: filter .12s, color .12s, transform .06s, box-shadow .12s;
 }
-.btn:hover { color: var(--ic); border-color: var(--ic); }
-.btn:disabled { opacity: .45; cursor: default; }
-.btn:focus-visible { outline: 2px solid var(--ic); outline-offset: 2px; }
+.btn:hover { background: var(--gold-btn-h); filter: brightness(1.05); }
+.btn:disabled { opacity: .4; cursor: default; filter: grayscale(.3); }
+.btn:focus-visible { outline: 2px solid #fff; outline-offset: 2px; }
+.btn:active { background: var(--gold-btn-p); transform: translateY(.5px); box-shadow: inset 0 1px 0 rgba(255,255,255,.18), 0 0 0 rgba(0,0,0,0); }
 
+/* 亮金钮：选中态实金底 + 白字（如情报流「全部」）。未选中保持低调灰字，选中即亮金 */
 .pill {
-  font-size: 11px; padding: 1px 7px; border-radius: var(--r-sm);
-  border: 1px solid var(--line-2); color: var(--fg-2);
+  font-size: var(--fs-body); padding: 4px 10px; border-radius: var(--r-sm);
+  border: 1px solid transparent; color: var(--fg-3);
   background: transparent; cursor: pointer; font-family: inherit;
-  transition: color .12s, background .12s, border-color .12s;
+  transition: color .12s, background .12s, box-shadow .12s;
 }
-.pill:hover { color: var(--fg); border-color: var(--line-2); }
+.pill:hover { color: var(--fg); background: var(--ic-bg-2); border-color: rgba(246,205,114,.30); }
 .pill[aria-pressed="true"] {
-  color: #f2f7fc; background: var(--ic-deep); border-color: var(--ic-mid); font-weight: 500;
+  color: #fff; font-weight: 600; text-shadow: var(--gold-text-shadow);
+  background: var(--gold-btn); border-color: transparent;
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.4), 0 1px 2px rgba(90,55,0,.25);
 }
-.pill:focus-visible { outline: 2px solid var(--ic); outline-offset: 2px; }
+.pill:focus-visible { outline: 2px solid rgba(246,205,114,.9); outline-offset: 2px; }
 
 /* ---------- 栅格 ---------------------------------------------------------- */
 
+/* 分区之间给足 22px 呼吸，卡内保持紧凑 —— 密的地方很密，空的地方很空 */
 .grid {
   display: grid;
-  grid-template-columns: minmax(0, 1fr) minmax(272px, 30%);
-  gap: 10px;
-  padding: 10px;
+  grid-template-columns: minmax(0, 1fr) minmax(288px, 30%);
+  gap: var(--s3);
+  padding: var(--s3);
+  padding-left: calc(var(--s3) + env(safe-area-inset-left));
+  padding-right: calc(var(--s3) + env(safe-area-inset-right));
   align-items: start;
 }
-.col-main, .col-side { display: flex; flex-direction: column; gap: 10px; min-width: 0; }
+.col-main, .col-side { display: flex; flex-direction: column; gap: var(--s3); min-width: 0; }
 
+/* 卡片：一张被光托起的纸 —— 发丝描边（离得极近才看得见）+ 内上缘光 + 深而柔的投影。
+   这层光把“躺平在纯黑上的盒子”坐成“立在暗室里的面板”。 */
 .card {
-  background: var(--panel);
-  border: 1px solid var(--line);
+  position: relative;
+  background: linear-gradient(180deg, rgba(255,255,255,.016) 0%, rgba(255,255,255,0) 34px), var(--panel);
+  border: 1px solid var(--hi-top);
   border-radius: var(--r);
-  padding: 10px 12px;
+  box-shadow: var(--sh-card);
+  padding: 20px;
   min-width: 0;
 }
 
 .card-h {
-  display: flex; align-items: center; gap: 8px;
-  flex-wrap: wrap; margin-bottom: 8px;
+  display: flex; align-items: center; gap: 10px;
+  flex-wrap: wrap; margin-bottom: 12px;
 }
-.card-h h2 { font-size: 12.5px; font-weight: 500; margin: 0; letter-spacing: .2px; }
-.card-h .note { font-size: 11px; color: var(--fg-3); }
+/* 眉题：比正文小一辈、带字距、配一道小金杠 —— 仪表面板的“表盘标签”语气，
+   把区块标题从和正文抢体量的尴尬里解放出来，大数值自会做主。 */
+.card-h h2 {
+  font-size: var(--fs-cap); font-weight: 600;
+  letter-spacing: .06em; color: var(--fg-2);
+  margin: 0; display: inline-flex; align-items: center; gap: 7px;
+}
+.card-h h2::before {
+  content: ""; width: 9px; height: 2px; border-radius: 1px;
+  background: var(--ic); flex: none;
+}
+.card-h .note { font-size: var(--fs-cap); color: var(--fg-3); }
 .card-h .spacer { margin-left: auto; }
 
-.tabs { display: flex; gap: 4px; flex-wrap: wrap; }
+.tabs { display: flex; gap: 5px; flex-wrap: wrap; }
+
+/* 全球市场在数据到达前是空 div，不预留高度会让滚动位置跳（CLS） */
+#world { min-height: 200px; }
 
 /* ---------- K 线 ---------------------------------------------------------- */
 
-#klinePrice { display: flex; align-items: baseline; gap: 8px; margin-left: auto; }
-#klinePrice .px { font-family: var(--mono); font-size: 15px; font-weight: 500; }
-#klinePrice .chg { font-family: var(--mono); font-size: 11.5px; }
+/* 全页唯一的视觉锚点：主力合约价格。其余所有字号都退到它下面 */
+#klinePrice { display: flex; align-items: baseline; gap: 10px; margin-left: auto; }
+#klinePrice .px {
+  font-family: var(--mono); font-size: var(--fs-hero); font-weight: 500;
+  font-variant-numeric: tabular-nums; letter-spacing: -.9px; line-height: 1.1;
+}
+/* 现价刷新弹一下：direction 色（红/绿）短暂浮起一圈光晕，再回落 */
+#klinePrice .px.tick { animation: priceTick .6s ease-out; }
+@keyframes priceTick {
+  0%   { text-shadow: 0 0 0 transparent; }
+  40%  { text-shadow: 0 0 16px currentColor; }
+  100% { text-shadow: 0 0 0 transparent; }
+}
+#klinePrice .chg {
+  font-family: var(--mono); font-size: var(--fs-val);
+  padding: 2px 8px; border-radius: 7px;
+  line-height: 1.4;
+}
+#klinePrice .chg.up   { background: var(--up-bg); }
+#klinePrice .chg.down { background: var(--down-bg); }
+#klinePrice .chg.flat { background: var(--flat-bg); }
 
 .kline-wrap { position: relative; }
 #kline { height: 300px; }
@@ -188,71 +300,122 @@ body {
 #klineOhlc b, .ohlc b { font-weight: 400; }
 
 .legend {
-  display: flex; gap: 12px; font-size: 11px; color: var(--fg-3);
-  margin-top: 4px; flex-wrap: wrap;
+  display: flex; gap: 14px; font-size: 11px; color: var(--fg-3);
+  margin-top: 6px; flex-wrap: wrap;
 }
-.legend i { display: inline-block; width: 10px; height: 2px; margin-right: 4px; vertical-align: middle; }
+/* MA 色条加一道高光毛边（像漆过的仪表线），不再是一根死平的色块 */
+.legend i {
+  position: relative; overflow: hidden;
+  display: inline-block; width: 12px; height: 2px;
+  border-radius: 1px; margin-right: 6px; vertical-align: middle;
+}
+.legend i::after {
+  content: ""; position: absolute; inset: 0 auto 0 55%;
+  width: 6px;
+  background: linear-gradient(90deg, transparent, rgba(255,255,255,.4));
+}
 
 .state {
-  font-size: 11.5px; color: var(--fg-3);
-  border-top: 1px dashed var(--line); margin-top: 8px; padding-top: 6px;
+  font-size: 11px; color: var(--fg-3);
+  border-top: 1px solid var(--line); margin-top: 10px; padding-top: 8px;
 }
 .state b { color: var(--fg-2); font-weight: 400; font-family: var(--mono); }
 
 /* ---------- 产业链传导链 -------------------------------------------------- */
 
-.chain { display: flex; align-items: stretch; gap: 3px; overflow-x: auto; padding-bottom: 2px; }
+.chain { display: flex; align-items: stretch; gap: 4px; overflow-x: auto; padding-bottom: 2px; }
 .chain::-webkit-scrollbar { height: 6px; }
 .chain::-webkit-scrollbar-thumb { background: var(--line-2); border-radius: 3px; }
 
 .node {
-  flex: 1 1 0; min-width: 70px;
-  background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: var(--r-sm);
-  padding: 6px 5px; text-align: center;
+  flex: 1 1 0; min-width: 74px;
+  background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0) 22px), var(--panel-2);
+  border: 1px solid transparent; border-radius: var(--r-sm);
+  padding: 8px 7px; text-align: center;
   cursor: pointer; font-family: inherit;
   overflow: hidden;                     /* 数值不外溢：见下面 .p / .d 的说明 */
-  transition: border-color .12s, background .12s;
+  transition: background .12s, transform .12s;
 }
-.node:hover { border-color: var(--ic); background: var(--panel-3); }
-.node:focus-visible { outline: 2px solid var(--ic); outline-offset: 1px; }
-.node[aria-pressed="true"] { border-color: var(--ic); background: var(--panel-3); }
+.node:hover { background: var(--panel-3); box-shadow: inset 0 0 0 1px rgba(246,205,114,.20); }
+.node:focus-visible { outline: 2px solid var(--ic); outline-offset: 2px; }
+.node[aria-pressed="true"] { background: var(--sel); }
+.node:active { transform: scale(.97); }
 /* 三个字段必须是块级：原来是 inline 的 span，会挤在同一行上互相顶出框外
    （「石脑油 7900 0.00%」「原油SC 724.0 +0.21%」就是这么跑出去的） */
 .node .n, .node .p, .node .d { display: block; white-space: nowrap; overflow: hidden; }
 .node .n { font-size: 11px; color: var(--fg-2); text-overflow: ellipsis; }
-.node .p { font-family: var(--mono); font-size: 12px; margin-top: 1px; }
+.node .p { font-family: var(--mono); font-size: 13px; margin-top: 2px; }
 .node .d { font-family: var(--mono); font-size: 11px; }
 .node.u { border-left: 2px solid var(--up); }
 .node.d { border-left: 2px solid var(--down); }
 .node.f { border-left: 2px solid var(--fg-3); }
 .node.end { border-right: 2px solid var(--seaglass); }
 
-.arrow { align-self: center; color: var(--fg-3); font-size: 12px; flex: none; user-select: none; }
+.arrow { align-self: center; color: var(--fg-3); font-size: 13px; flex: none; user-select: none; }
 
 /* ---------- 价差 / 加工费 ------------------------------------------------- */
 
-.spreads { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 10px; }
+.spreads { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 .spread {
-  background: var(--panel-2); border-radius: var(--r-sm);
-  padding: 8px 9px; min-width: 0; overflow: hidden;
+  background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0) 22px), var(--panel-2);
+  border-radius: var(--r-sm);
+  padding: 10px 11px; min-width: 0; overflow: hidden;
 }
-.spread .lb { font-size: 11px; color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.spread .vl { font-family: var(--mono); font-size: 14px; margin-top: 2px; white-space: nowrap; overflow: hidden; }
-.spread .dl { font-family: var(--mono); font-size: 11px; margin-top: 1px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
-.spread svg { display: block; margin-top: 5px; }
+.spread .lb { display: block; font-size: var(--fs-cap); color: var(--fg-2); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.spread .vl { display: block; text-align: right; font-family: var(--mono); font-size: var(--fs-val); margin-top: 3px; white-space: nowrap; overflow: hidden; font-variant-numeric: tabular-nums; letter-spacing: -.2px; }
+.spread .dl { display: block; text-align: right; font-family: var(--mono); font-size: var(--fs-cap); margin-top: 2px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; letter-spacing: -.2px; }
+.spread svg { display: block; margin-top: 6px; }
 
 /* ---------- 全球市场（宏观） --------------------------------------------- */
 
-.mgroup + .mgroup { margin-top: 10px; padding-top: 9px; border-top: 1px solid var(--line); }
+.mgroup + .mgroup { margin-top: 14px; padding-top: 12px; border-top: 1px solid var(--line); }
 .mgroup-h {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 11px; color: var(--fg-3); margin-bottom: 6px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: var(--fs-cap); color: var(--fg-3); margin-bottom: 8px;
 }
 .mgroup-h .rule { flex: 1; height: 1px; background: var(--line); }
-.mgroup.mini { border-top-color: rgba(255,255,255,.04); }
-.mgroup.mini .mgroup-h { margin-bottom: 4px; }
+
+/* 折叠分组标题：整行可点。亮金只在「折叠触发器」这一处做信号，其余数字一律冷白金 */
+.mgroup-sum {
+  display: flex; align-items: center; gap: 7px; width: 100%;
+  font: inherit; color: var(--fg-2); background: transparent;
+  border: 0; border-radius: var(--r-sm); padding: 6px 6px 6px 2px;
+  cursor: pointer; text-align: left;
+}
+.mgroup-sum:hover { color: var(--fg); }
+.mgroup-sum:focus-visible { outline: 2px solid var(--ic); outline-offset: 2px; }
+.mgroup-sum .chev {
+  flex: none; width: 6px; height: 6px; margin-left: 2px;
+  border-right: 1.5px solid var(--ic); border-bottom: 1.5px solid var(--ic);
+  transform: rotate(45deg); transition: transform .15s;
+}
+.mgroup-sum[aria-expanded="false"] .chev { transform: rotate(-45deg); }
+.mgroup-sum .g-note { color: var(--fg-3); flex: none; }
+.mgroup-sum .g-count { color: var(--fg-2); font-family: var(--mono); font-size: var(--fs-cap); flex: none; }
+.mgroup-sum .rule { flex: 1; height: 1px; background: var(--line); }
+
+/* 折叠时只露一行摘要：名 + 值 + 涨跌，四个项点到为止，不打散整组语义 */
+.mgroup[data-open="0"] .mtiles { display: flex; flex-wrap: nowrap; gap: 6px; overflow-x: auto; }
+.mgroup[data-open="0"] .mtile {
+  flex: none; min-width: 0; width: auto; padding: 6px 9px; display: inline-flex;
+  flex-direction: column; gap: 1px; border-left: 2px solid var(--fg-3);
+}
+.mgroup[data-open="0"] .mtile .ft, .mgroup[data-open="0"] .mtile svg { display: none; }
+.mgroup[data-open="0"] .mtile .nm { font-size: var(--fs-cap); }
+.mgroup[data-open="0"] .mtile .row { margin-top: 0; gap: 5px; }
+.mgroup[data-open="0"] .mtile .vv { font-size: var(--fs-body); }
+.mgroup[data-open="0"] .mtile .pc { font-size: var(--fs-cap); }
+
+.mgroup.mini { border-top-color: rgba(255,255,255,.05); }
+.mgroup.mini .mgroup-h { margin-bottom: 5px; }
+/* 聚焦组用「底色阶 + 亮金边」从卡片里再浮一层，其余组退成安静摘要 */
+.mgroup.focus {
+  padding: var(--s2); background: var(--panel-3);
+  border: 1px solid rgba(246, 205, 114, .28); border-radius: var(--r);
+}
+.mgroup.focus .mgroup-h .rule { display: none; }
+.mgroup.mini .mtile.c { background: transparent; }
+.mgroup.mini .mtile.c .c-nm { color: var(--fg-3); }
 
 .mtiles { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; }
 
@@ -260,51 +423,129 @@ body {
 .mtile {
   display: block; width: 100%; text-align: left;
   font: inherit; color: inherit; cursor: pointer;
-  background: var(--panel-2); border: 0; border-radius: var(--r-sm);
+  background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0) 26px), var(--panel-2);
+  border: 1px solid transparent;
   border-left: 2px solid var(--fg-3);
-  padding: 7px 8px; min-width: 0; overflow: hidden;
-  transition: background .12s, box-shadow .12s;
+  border-radius: var(--r-sm);
+  padding: 9px 10px; min-width: 0; overflow: hidden;
+  transition: background .14s, box-shadow .14s, transform .12s, border-color .14s;
 }
-.mtile:hover { background: var(--panel-3); }
-.mtile:focus-visible { outline: 2px solid var(--ic); outline-offset: 1px; }
-.mtile[aria-pressed="true"] { background: var(--panel-3); box-shadow: inset 0 0 0 1px rgba(0,145,212,.5); }
+.mtile:hover {
+  background: var(--panel-3);
+  box-shadow: inset 0 0 0 1px rgba(246,205,114,.22);   /* 悬停一道金发丝 */
+}
+.mtile:focus-visible { outline: 2px solid var(--ic); outline-offset: 2px; }
+/* 选中态：左色条转金 + 底色阶 + 一条金毛边，比纯平更有“正在看它”的锁定感。
+   #world 抬一档特异度，压过 .mtile.u/.d 的方向色，让“选中=金”永远成立 */
+#world .mtile[aria-pressed="true"] {
+  background: var(--panel-3);
+  border-color: rgba(246,205,114,.36);
+  border-left-color: var(--ic);
+  box-shadow: inset 0 0 0 1px rgba(246,205,114,.14);
+}
+.mtile:active { transform: scale(.985); }
 .mtile.u { border-left-color: var(--up); }
 .mtile.d { border-left-color: var(--down); }
 .mtile .nm {
-  display: block; font-size: 11px; color: var(--fg-2);
+  display: block; font-size: var(--fs-body); color: var(--fg-2);
   white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
 }
-.mtile .row { display: flex; align-items: baseline; gap: 6px; margin-top: 1px; min-width: 0; }
-.mtile .vv { font-family: var(--mono); font-size: 13px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; }
-.mtile .pc { font-family: var(--mono); font-size: 11px; white-space: nowrap; flex: none; }
-.mtile svg { display: block; margin-top: 4px; }
-.mtile .ft { display: block; font-size: 11px; color: var(--fg-3); margin-top: 3px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* 仓单注销清零的小标记：让「0.0000」一眼能看出是注销后的真值，不是没取到 */
+.mtile .nm .tagzero {
+  font-style: normal; font-size: var(--fs-cap); line-height: 1;
+  padding: 1px 4px; border-radius: 3px; margin-left: 4px;
+  background: var(--flat-bg); color: var(--fg-3); vertical-align: 1px;
+}
+.mtile .row { display: flex; justify-content: flex-end; align-items: baseline; gap: 6px; margin-top: 2px; min-width: 0; }
+.mtile .vv { font-family: var(--mono); font-size: var(--fs-val); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; min-width: 0; font-variant-numeric: tabular-nums; letter-spacing: -.2px; }
+.mtile .pc { font-family: var(--mono); font-size: var(--fs-cap); white-space: nowrap; flex: none; font-variant-numeric: tabular-nums; letter-spacing: -.2px; }
+.mtile svg { display: block; margin-top: 5px; }
+.mtile .ft { display: block; font-size: var(--fs-cap); color: var(--fg-3); margin-top: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 
 /* 紧凑瓦片：有项目被放大时，其余项缩成一行读得完的小块 */
 .mtiles.compact { display: flex; flex-wrap: wrap; gap: 5px; }
-.mtile.c { display: inline-flex; align-items: baseline; gap: 6px; width: auto; padding: 2px 7px; }
-.mtile.c .c-nm { font-size: 11px; color: var(--fg-2); white-space: nowrap; }
-.mtile.c .c-vv { font-family: var(--mono); font-size: 11.5px; white-space: nowrap; }
-.mtile.c .c-pc { font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+.mtile.c { display: inline-flex; align-items: baseline; gap: 6px; width: auto; padding: 4px 9px; min-height: 30px; }
+.mtile.c .c-nm { font-size: var(--fs-body); color: var(--fg-2); white-space: nowrap; }
+.mtile.c .c-vv { font-family: var(--mono); font-size: var(--fs-val); white-space: nowrap; }
+.mtile.c .c-pc { font-family: var(--mono); font-size: var(--fs-cap); white-space: nowrap; }
 
 /* ---------- 全球市场：点击放大（聚焦） ----------------------------------- */
 
-.wfocus { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(190px, 1fr); gap: 10px; }
+.wfocus { display: grid; grid-template-columns: minmax(0, 1.6fr) minmax(190px, 1fr); gap: 14px; }
 .wfocus-main { min-width: 0; }
-.wfocus-h { display: flex; align-items: baseline; flex-wrap: wrap; gap: 8px; margin-bottom: 6px; }
-.wfocus-h b { font-size: 13px; font-weight: 500; }
-.wfocus-h .vv { font-family: var(--mono); font-size: 16px; }
-.wfocus-h .pc { font-family: var(--mono); font-size: 11.5px; }
+.wfocus-h { display: flex; align-items: baseline; flex-wrap: wrap; gap: 9px; margin-bottom: 8px; }
+.wfocus-h b { font-size: var(--fs-body); font-weight: 600; }
+/* 放大面板的数值是次级焦点：比锚点小一档，不与主力合约价格争 */
+.wfocus-h .vv { font-family: var(--mono); font-size: var(--fs-focus); letter-spacing: -.3px; font-variant-numeric: tabular-nums; }
+.wfocus-h .pc { font-family: var(--mono); font-size: var(--fs-cap); font-variant-numeric: tabular-nums; letter-spacing: -.2px; }
 .wfocus-h .fnote { font-size: 11px; }
 .wfocus-h .spacer { margin-left: auto; }
 .wfocus-chart { position: relative; }
 .wchart { height: 320px; }
-.wfocus-meta { font-size: 11px; color: var(--fg-3); margin-top: 5px; line-height: 1.7; }
+.wfocus-meta { font-size: 11px; color: var(--fg-3); margin-top: 6px; line-height: 1.7; }
 .wfocus-meta b { color: var(--fg-2); font-weight: 400; font-family: var(--mono); }
-.wfocus-state { margin-top: 4px; }
+.wfocus-state { margin-top: 6px; }
 .wfocus-side { min-width: 0; display: flex; flex-direction: column; gap: 5px; }
 .wfocus-side-h { font-size: 11px; color: var(--fg-3); }
 .wfocus-side .mtile.c { width: 100%; justify-content: space-between; }
+
+/* ---------- 右栏固定 Inspector ------------------------------------------- */
+
+/* 吸顶固定宿主：右栏随内容滚，Inspector 贴住右栏顶部不滚走，点瓦片只更新内容。
+   高度取整块可视高的六成 —— 放得下 K 线又留得出下方情报流。 */
+.inspector-card { position: sticky; top: calc(48px + 14px); z-index: 5;
+  border-color: rgba(246,205,114,.22);
+  border-top: 2px solid var(--ic);
+  box-shadow: var(--sh-pop), inset 0 1px 0 rgba(255,255,255,.03); }
+.inspector-card[hidden] { display: none; }
+.inspector-card .card-h { margin-bottom: 8px; }
+.inspector-card .wfocus, .inspector-card .wfocus-main { display: block; }
+.inspector-card .wchart { height: 300px; }
+.inspector-card .wfocus-h { display: block; margin-bottom: 6px; }
+.inspector-card .wfocus-h b { display: inline-block; margin-right: 8px; }
+.inspector-card .wfocus-h .vv,
+.inspector-card .wfocus-h .pc,
+.inspector-card .wfocus-h .fnote { margin-right: 8px; }
+.inspector-card #inspClose { float: right; }
+.inspector-card .wfocus-state { margin-top: 4px; }
+/* 空面板占住高度，不让卡片在取数时塌成一条线（CLS） */
+.inspector-card .wfocus-chart { min-height: 300px; }
+
+/* ---------- 宏观速览卡 ---------------------------------------------------- */
+
+.macro-card { display: flex; flex-direction: column; }
+.macro-card[hidden] { display: none; }
+#macroBody {
+  display: flex; flex-direction: column; gap: 7px;
+  font-size: var(--fs-body); line-height: 1.6; color: var(--fg-2);
+}
+#macroBody .mi {
+  padding: 8px 10px; border-radius: var(--r-sm);
+  background: var(--panel-2); border-left: 2px solid var(--ic);
+}
+#macroBody .mi .m-h { display: flex; align-items: baseline; gap: 7px; margin-bottom: 2px; }
+#macroBody .mi .m-h .tag {
+  font-size: var(--fs-cap); line-height: 1.1; padding: 1px 6px; border-radius: 3px;
+  background: var(--gold-btn); color: #fff; font-weight: 700; flex: none;
+  text-shadow: var(--gold-text-shadow);
+}
+#macroBody .mi .m-h .w { font-family: var(--mono); font-size: var(--fs-cap); color: var(--fg-3); flex: none; }
+#macroBody .mi p { margin: 0; }
+
+/* 空态 / 错误态三种不同视觉（灰 / 虚线 / 红） */
+.state-empty {
+  color: var(--fg-3); background: transparent; border: 0;
+  font-size: var(--fs-cap); padding: 6px 2px;
+}
+.state-dashed {
+  color: var(--fg-2); border: 1px dashed var(--line-2); border-radius: var(--r-sm);
+  font-size: var(--fs-cap); padding: 10px 12px; background: transparent;
+}
+.state-error {
+  color: var(--up); background: var(--up-bg); border-radius: var(--r-sm);
+  font-size: var(--fs-cap); padding: 10px 12px;
+}
+.state-error b { color: var(--up); }
 
 /* ---------- 情报流 -------------------------------------------------------- */
 
@@ -318,20 +559,26 @@ body {
 
 .ni {
   display: block; text-decoration: none; color: inherit;
-  padding: 7px 8px; border-radius: var(--r-sm);
+  padding: 9px 10px; border-radius: var(--r-sm);
   border-left: 2px solid transparent;
   transition: background .12s, border-color .12s;
 }
 .ni:hover { background: var(--panel-2); border-left-color: var(--ic); }
 .ni:focus-visible { outline: 2px solid var(--ic); outline-offset: -2px; }
 .ni + .ni { border-top: 1px solid var(--line); }
-.ni .t { font-size: 11px; font-family: var(--mono); color: var(--fg-3); display: flex; gap: 6px; align-items: center; }
-.ni .t .ch { color: var(--ic); font-family: var(--sans); }
-.ni .t .new {
-  font-family: var(--sans); font-size: 10px; line-height: 1;
-  padding: 2px 4px; border-radius: 2px; background: var(--ic-deep); color: #f2f7fc;
+.ni .t { font-size: var(--fs-cap); font-family: var(--mono); color: var(--fg-3); display: flex; gap: 6px; align-items: center; }
+.ni .t .ch { color: var(--ic); font-family: var(--sans); display: inline-flex; align-items: center; gap: 5px; }
+/* 频道前缀一颗金点：快速扫过时先认点，再认字 */
+.ni .t .ch::before {
+  content: ""; width: 4px; height: 4px; border-radius: 50%;
+  background: var(--ic); flex: none;
 }
-.ni .h { font-size: 12.5px; line-height: 1.55; margin: 2px 0 0; color: var(--fg); }
+.ni .t .new {
+  font-family: var(--sans); font-size: var(--fs-cap); line-height: 1.1;
+  padding: 2px 6px; border-radius: 3px; background: var(--gold-btn); color: #fff;
+  font-weight: 700; text-shadow: var(--gold-text-shadow);
+}
+.ni .h { font-size: var(--fs-body); line-height: 1.55; margin: 3px 0 0; color: var(--fg); }
 .ni mark { background: var(--ic-bg); color: var(--ic); padding: 0 1px; border-radius: 2px; }
 .ni.fresh { animation: flash 1.4s ease-out 1; }
 @keyframes flash {
@@ -347,52 +594,74 @@ body {
 
 /* ---------- 日历 ---------------------------------------------------------- */
 
-.cal-row { display: flex; align-items: baseline; gap: 8px; font-size: 11.5px; }
+.cal-row { display: flex; align-items: baseline; gap: 10px; font-size: var(--fs-body); }
 .cal-row .lb { color: var(--fg-2); }
 .cal-row .vv { margin-left: auto; font-family: var(--mono); color: var(--fg); }
-.cal-row + .cal-row { margin-top: 5px; }
-.cal-row.sub { display: block; font-size: 11px; color: var(--fg-3); margin-top: 2px; }
+.cal-row + .cal-row { margin-top: 6px; }
+.cal-row.sub { display: block; font-size: 11px; color: var(--fg-3); margin-top: 3px; }
 .cal-row.sub b { color: var(--fg-2); font-weight: 400; font-family: var(--mono); }
 .cal-row.triple .mid { margin-left: auto; font-size: 11px; white-space: nowrap; }
-.cal-row.triple .vv { margin-left: 8px; }
-.bar { height: 3px; background: var(--line); border-radius: 2px; margin: 6px 0 10px; }
-.bar i { display: block; height: 3px; background: var(--ic); border-radius: 2px; }
+.cal-row.triple .vv { margin-left: 10px; }
+.bar { position: relative; height: 3px; background: rgba(255,255,255,.06);
+  border-radius: 2px; margin: 8px 0 12px; overflow: visible; }
+.bar i {
+  position: relative; display: block; height: 3px;
+  background: linear-gradient(90deg, var(--ic-deep), var(--ic)); border-radius: 2px;
+}
+/* 进度头一颗发光圆点：一眼看清还剩多少，是这条进度条的灵魂 */
+.bar i::after {
+  content: ""; position: absolute; right: -1px; top: 50%;
+  width: 7px; height: 7px; transform: translateY(-50%);
+  border-radius: 50%; background: var(--ic);
+  box-shadow: 0 0 7px rgba(246,205,114,.85);
+}
 .warn {
-  font-size: 11px; color: var(--up); background: var(--up-bg);
-  border-radius: var(--r-sm); padding: 5px 7px; margin-top: 8px;
+  display: flex; align-items: flex-start; gap: 8px;
+  font-size: var(--fs-body); color: var(--up); background: var(--up-bg);
+  border-radius: var(--r-sm); padding: 8px 11px; margin-top: 10px;
+  border-left: 3px solid var(--up);
 }
 
 /* 启动时模块缺失的横幅。空白面板是最难排查的失败形态，所以要显式喊出来 */
 .banner {
   background: var(--up-bg);
-  border-bottom: 1px solid rgba(240, 85, 78, .35);
+  border-bottom: 1px solid rgba(224, 90, 82, .35);
   color: var(--fg);
-  font-size: 12px; line-height: 1.6;
-  padding: 9px 14px;
+  font-size: var(--fs-body); line-height: 1.55;
+  padding: 10px 16px;
+  padding-left: calc(16px + env(safe-area-inset-left));
   position: sticky; top: 0; z-index: 40;
 }
-.banner b { color: var(--up); font-weight: 500; }
+.banner b { color: var(--up); font-weight: 600; }
 
 /* ---------- 底部：热力图 + 血统 ------------------------------------------- */
 
 .bottombar {
-  border-top: 1px solid var(--line); background: var(--bg-2);
-  padding: 8px 12px 14px;
+  border-top: 1px solid rgba(255,255,255,.06);
+  background: rgba(24, 25, 33, .72);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+  padding: 12px 16px calc(16px + env(safe-area-inset-bottom));
+  padding-left: calc(16px + env(safe-area-inset-left));
+  padding-right: calc(16px + env(safe-area-inset-right));
 }
-.heat { display: flex; align-items: center; gap: 5px; flex-wrap: wrap; }
+.heat { display: flex; align-items: center; gap: 6px; flex-wrap: wrap; }
 .heat .lb { font-size: 11px; color: var(--fg-3); margin-right: 2px; }
 .tile {
-  font-family: var(--mono); font-size: 11px; padding: 1px 7px;
-  border-radius: var(--r-sm); cursor: pointer; border: 1px solid transparent;
+  font-family: var(--mono); font-size: 11px; padding: 3px 9px;
+  border-radius: var(--r-sm); cursor: pointer;
+  border: 1px solid transparent;
   background: var(--flat-bg); color: var(--flat);
+  box-shadow: inset 0 1px 0 rgba(255,255,255,.05);
   transition: filter .12s;
 }
 .tile:hover { filter: brightness(1.35); }
+.tile:focus-visible { outline: 2px solid var(--ic); outline-offset: 2px; }
 .tile.u { background: var(--up-bg); color: var(--up); }
 .tile.d { background: var(--down-bg); color: var(--down); }
-.tile.stale::after { content: "·"; margin-left: 3px; color: var(--ic); }
+.tile.stale::after { content: "·"; margin-left: 4px; color: var(--ic); }
 
-.prov { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; font-size: 11px; color: var(--fg-3); margin-top: 8px; }
+.prov { display: flex; align-items: center; gap: 12px; flex-wrap: wrap; font-size: 11px; color: var(--fg-3); margin-top: 10px; }
 .prov .dot { display: inline-block; width: 6px; height: 6px; border-radius: 50%; margin-right: 4px; vertical-align: middle; }
 .dot.ok       { background: var(--down); }
 .dot.partial  { background: var(--ic); }
@@ -400,30 +669,48 @@ body {
 .dot.conflict { background: var(--up); }
 
 .summary {
-  margin: 9px 0 0; font-size: 12px; line-height: 1.65; color: var(--fg-2);
-  border-left: 2px solid var(--ic); padding-left: 9px;
+  margin: 12px 0 0; font-size: 13px; line-height: 1.65; color: var(--fg-2);
+  border-left: 2px solid var(--ic); padding-left: 10px;
 }
-.summary b { color: var(--ic); font-weight: 400; }
+.summary b { color: var(--ic); font-weight: 600; }
 
 /* AI 复盘条 */
 .ai {
-  margin-top: 9px; padding: 8px 10px;
-  background: var(--panel-2); border-radius: var(--r-sm);
+  margin-top: 12px; padding: 10px 12px;
+  background: linear-gradient(180deg, rgba(246,205,114,.05), transparent 60%), var(--panel-2);
+  border-radius: var(--r-sm);
   border-left: 2px solid var(--ic-deep);
-  font-size: 12px; line-height: 1.65; color: var(--fg-2);
+  font-size: 13px; line-height: 1.65; color: var(--fg-2);
 }
 .ai[hidden] { display: none; }
 .ai .ai-h {
-  display: flex; align-items: center; gap: 7px;
-  font-size: 11px; color: var(--fg-3); margin-bottom: 4px;
+  display: flex; align-items: center; gap: 8px;
+  font-size: 11px; color: var(--fg-3); margin-bottom: 5px;
 }
 .ai .ai-h .tag {
-  font-size: 10px; line-height: 1; padding: 2px 5px; border-radius: 2px;
-  background: var(--ic-bg); color: var(--ic);
+  font-size: 11px; line-height: 1.1; padding: 2px 6px; border-radius: 3px;
+  background: var(--gold-btn); color: #fff; font-weight: 700;
+  text-shadow: var(--gold-text-shadow);
 }
 .ai p { margin: 0 0 4px; }
 .ai p:last-child { margin-bottom: 0; }
 .ai b { color: var(--fg); font-weight: 400; }
+
+/* 诊断区：默认收起，只有要排查部署时才展开 */
+.diag { margin-top: 12px; }
+.diag > summary {
+  font-size: 11px; color: var(--fg-3); cursor: pointer;
+  list-style: none; width: fit-content;
+}
+.diag > summary::-webkit-details-marker { display: none; }
+.diag > summary::before { content: "› "; color: var(--fg-3); }
+.diag[open] > summary::before { content: "⌄ "; }
+.diag > summary:hover { color: var(--fg-2); }
+.diag > summary:focus-visible { outline: 2px solid var(--ic); outline-offset: 2px; border-radius: 3px; }
+.diag-in {
+  display: flex; align-items: center; gap: 12px; flex-wrap: wrap;
+  font-size: 11px; color: var(--fg-3); padding-top: 9px;
+}
 
 /* ---------- 终端模式 ------------------------------------------------------ */
 
@@ -436,8 +723,10 @@ body {
 .term[hidden] { display: none; }
 .term-box {
   width: min(560px, calc(100vw - 28px));
-  background: var(--panel); border: 1px solid var(--line-2);
+  background: linear-gradient(180deg, rgba(255,255,255,.02), rgba(255,255,255,0) 30px), var(--panel);
+  border: 1px solid var(--hi-top);
   border-radius: var(--r); overflow: hidden;
+  box-shadow: var(--sh-pop), inset 0 1px 0 rgba(255,255,255,.03);
 }
 .term-in {
   display: flex; align-items: center; gap: 8px; padding: 11px 13px;
@@ -446,11 +735,11 @@ body {
 .term-in .pr { color: var(--ic); font-family: var(--mono); font-size: 13px; }
 .term-in input {
   flex: 1; background: transparent; border: 0; outline: none;
-  font-family: var(--mono); font-size: 13.5px; color: var(--fg);
+  font-family: var(--mono); font-size: 13px; color: var(--fg);
 }
 .term-out {
-  max-height: 44vh; overflow-y: auto; padding: 9px 13px 12px;
-  font-family: var(--mono); font-size: 11.5px; color: var(--fg-2); line-height: 1.75;
+  max-height: 44vh; overflow-y: auto; padding: 10px 13px 12px;
+  font-family: var(--mono); font-size: 11px; color: var(--fg-2); line-height: 1.75;
 }
 .term-out .ok { color: var(--down); }
 .term-out .er { color: var(--up); }
@@ -469,17 +758,31 @@ body {
 }
 
 @media (max-width: 780px) {
-  .grid { grid-template-columns: minmax(0, 1fr); }
+  body { background-attachment: scroll; }
+  .grid { grid-template-columns: minmax(0, 1fr); gap: 16px; padding: 12px;
+          padding-left: calc(12px + env(safe-area-inset-left));
+          padding-right: calc(12px + env(safe-area-inset-right)); }
+  .col-main, .col-side { gap: 16px; }
+  .card { padding: 12px 14px; }
   .col-side { order: 2; }
-  #newsList { height: 380px; }
+  /* 手机上不吸顶：Inspector 回组内放大，避免 sticky 挡住触控 */
+  .inspector-card { position: static; }
+  .inspector-card .wchart, .inspector-card .wfocus-chart { height: 260px; min-height: 260px; }
+  /* 固定高度在手机上会把页面撑到要滚很久，改成占屏高的六成 */
+  #newsList { height: 60dvh; }
   #kline { height: 280px; }
-  .topbar { height: auto; padding: 6px 10px; flex-wrap: wrap; row-gap: 4px; }
+  .topbar {
+    height: auto; flex-wrap: wrap; row-gap: 4px;
+    padding: 6px calc(12px + env(safe-area-inset-right)) 6px calc(12px + env(safe-area-inset-left));
+  }
   .marquee { order: 3; flex-basis: 100%; }
   #clock { display: none; }
   /* 窄屏把两排 tab 各占一行，否则 margin-left:auto 会把它们挤到重叠 */
   .card-h .tabs { width: 100%; }
   .card-h .tabs.spacer { margin-left: 0; }
   .card-h #klinePrice { margin-left: 0; width: 100%; }
+  /* 锚点数字在手机上退一档，避免和标题争行高 */
+  #klinePrice .px { font-size: 24px; letter-spacing: -.5px; }
   .node { min-width: 76px; }
   .mtiles { grid-template-columns: repeat(2, minmax(0, 1fr)); }
   /* 聚焦面板在手机上单列堆叠：大图在上，同组其他在下面一行行排 */
@@ -488,9 +791,9 @@ body {
   .wfocus-side .mtile.c { width: auto; }
   /* 读数字段多，给一层底色压在蜡烛上，防止糊成一片 */
   #klineOhlc, .ohlc {
-    font-size: 10.5px; gap: 7px;
-    background: rgba(14, 17, 22, .78);
-    border-radius: 4px; padding: 1px 5px;
+    font-size: 11px; gap: 7px;
+    background: rgba(7, 7, 8, .82);
+    border-radius: 5px; padding: 2px 6px;
   }
 }
 

@@ -12,7 +12,7 @@
    每次改动源码都要 +1。页脚会显示它，用来确认「线上跑的到底是哪一版」——
    上传 / 部署之后如果页脚还是旧号，说明浏览器缓存没清或传错了路径。
    -------------------------------------------------------------------------- */
-const BUILD = '2026-09-23.6';
+const BUILD = '2026-09-23.20';
 
 /* 自检要探测的本地文件。
    作用：把「我传了但没生效」变成一个页面自己能回答的问题 ——
@@ -123,7 +123,7 @@ const WORLD_GROUPS = [
   },
   {
     id: 'wh', label: '交易所仓单（在线复现）',
-    note: '东财数据中心 · 日频 · 与你的 CirculatingInventory 逐日一致 · 看增减不看百分比，注销期归零属正常',
+    note: '东财数据中心 · 日频 · 看增减（张）不看百分比 · 注销期归零属正常，点开有 90 天曲线',
     items: [
       { id: 'TA', label: 'PTA 仓单',  src: 'em_stock', tons: 5,  digits: 4, suffix: '万吨' },
       { id: 'PX', label: 'PX 仓单',   src: 'em_stock', tons: 5,  digits: 4, suffix: '万吨' },
@@ -155,6 +155,28 @@ const SPARK_DAYS = 60;
 
 /* 聚焦大图（点瓦片放大）取几根日线 */
 const FOCUS_DAYS = 120;
+
+/* --------------------------------------------------------------------------
+   0c. AI 代理 & 宏观速览 —— 前端绝不放密钥，走 Cloudflare Worker
+   部署：tools/cloudflare_worker.js（wrangler 部署后）
+   url  填 worker 发布地址，如 https://your-name.workers.dev
+   token 填 wrangler secret put SHARED_TOKEN 时的那串
+   留 null / 空 = 宏观速览按「未配置」降级为灰底提示，不调任何 API、不花钱。
+   -------------------------------------------------------------------------- */
+const AI_PROXY = { url: null, token: null };
+
+/* 全球市场分组默认是否折叠。true = 只展开 A股/美股，其余收成一行摘要 */
+const WORLD_COLLAPSED_DEFAULT = true;
+const WORLD_EXPAND_HINT = ['a', 'us'];
+
+/* 宏观速览：压缩多少条、覆盖哪些频道、触发阈值 */
+const MACRO_OVERVIEW = {
+  maxPoints: 5,                 // 最多输出几条要点
+  maxNews: 8,                   // 每次最多喂多少条情报进上下文
+  channels: ['macro', 'bonds', 'fed', 'chain'],  // 只从这些频道取
+  cooldownMs: 12 * 60e3,        // 两次调用之间的最小间隔（省 token）
+  maxDaily: 30                  // 单日最多调用次数（省 token 天顶）
+};
 
 /* --------------------------------------------------------------------------
    3. 情报流频道

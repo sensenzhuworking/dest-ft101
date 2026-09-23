@@ -460,6 +460,8 @@ const Desk = (() => {
           value: r.zh * it.tons / 10000,        // 张 → 万吨，与你的 CirculatingInventory 同口径
           chg: r.chgZh * it.tons / 10000,
           pct: null,                            // 仓单看增减，不看百分比
+          zh: r.zh,                             // 张数原值
+          chgZh: r.chgZh,                       // 当日增减（张）—— 这个才是仓单的看点
           live: false, asOf: r.date, src: r.src
         };
       }
@@ -481,6 +483,23 @@ const Desk = (() => {
         const bars = await txKline(it.kline);
         if (bars.length >= 3) picks[it.id].spark = bars.map(b => b.close);
       } catch (e) { /* 趋势拿不到就不画，不影响数值 */ }
+    });
+
+    /* 仓单也要画迷你趋势。
+       起因：注销期四个品种同时归零，「0.0000 万吨」×4 看着像取数失败。
+       补上 90 天走势 + 「上次非零」之后，一眼能看出是真的一条线降到了 0，
+       而不是没接到数据 —— 同时把「上次非零」的日期和数值一起带出来。 */
+    const needWh = all.filter(i => i.src === 'em_stock' && picks[i.id]);
+    await mapLimit(needWh, 2, async it => {
+      try {
+        const s = await emStockHistory(it.id, it.tons, 90);
+        if (s.length >= 3) {
+          picks[it.id].spark = s.map(x => x[1]);
+          const nz = s.filter(x => x[1] > 0).pop();
+          if (nz) picks[it.id].lastNonZero = { date: nz[0], value: nz[1] };
+          picks[it.id].zeroSince = nz ? s[s.indexOf(nz) + 1] ? s[s.indexOf(nz) + 1][0] : null : null;
+        }
+      } catch (e) { /* 历史拿不到就不画，数值照旧 */ }
     });
 
     const groups = [];

@@ -16,10 +16,13 @@
     bars: [],
     loading: false,
     world: null,
-    focus: null,          // 全球市场聚焦中的瓦片 id
+    focus: null,          // 全球市场聚焦中的瓦片 id（显示在右栏固定 Inspector）
     focusCache: {},       // 聚焦序列缓存：id → {kind, bars|points, src}
+    open: {},             // 全球市场分组展开态：groupId → bool（默认见 WORLD_EXPAND_HINT）
+    macro: { lastRun: 0, dayKey: '', todayCount: 0, busy: false },  // 宏观速览节流态
     ai: null,
     lastNewsCount: 0,
+    lastNewsAt: 0,        // 情报流上次成功刷新时刻（后台追平用）
     timers: []
   };
 
@@ -78,8 +81,14 @@
     const last = bars[bars.length - 1], prev = bars[bars.length - 2];
     const chg = prev ? last.close - prev.close : null;
     const pct = prev && prev.close ? chg / prev.close * 100 : null;
-    $('klineLast').textContent = fmtNum(last.close, 1);
-    $('klineLast').className = 'px num ' + cls(chg);
+    const px = $('klineLast');
+    const fresh = fmtNum(last.close, 1);
+    // 现价每次刷新都弹一下（tick 火苗）：方向色短暂浮起再回落，制造“这台表在走”的活感
+    px.textContent = fresh;
+    px.className = 'px num ' + cls(chg);
+    if (px.textContent !== fresh || !px.classList.contains('tick')) {
+      px.classList.remove('tick'); void px.offsetWidth; px.classList.add('tick');
+    }
     $('klineChg').textContent = chg === null ? '' : fmtSigned(chg, 1) + '  ' + fmtPct(pct);
     $('klineChg').className = 'chg num ' + cls(chg);
     const cm = S.desk.chart_map[S.sym] || {};
@@ -169,16 +178,37 @@
     if (it.pct == null && it.chg != null) return fmtSigned(it.chg, it.digits);
     return fmtPct(it.pct, 2);
   }
+  /** 涨跌显示：仓单看「当日增减多少张」，百分比项看百分比，其余看绝对涨跌 */
   function chgText (it) {
+    if (it.srcId === 'em_stock' && it.chgZh != null) return fmtSigned(it.chgZh, 0) + ' 张';
     return (it.pct == null && it.chg != null) ? fmtSigned(it.chg, it.digits) : fmtPct(it.pct, 2);
   }
+  /** 涨跌上色的方向：仓单按增减张数着色，其余按百分比 */
+  function chgCls (it) {
+    return cls(it.srcId === 'em_stock' && it.chgZh != null ? it.chgZh : it.pct);
+  }
   function footText (it) {
+    if (it.srcId === 'em_stock') {
+      // 注销期归零时，必须把「上次非零」摆出来，否则 0.0000 看着像没接到数据
+      if (it.value === 0 && it.lastNonZero) {
+        return '注销清零 · 上次非零 ' + it.lastNonZero.date + ' ' +
+               fmtNum(it.lastNonZero.value, 4) + '万吨';
+      }
+      return '日终 ' + (it.asOf || '');
+    }
     return it.live ? '' : '日终 ' + (it.asOf || '');
   }
   function tipText (it) {
-    return (it.note ? it.note + ' · ' : '') + (it.src || '') +
-      (it.ts ? ' · ' + new Date(it.ts).toLocaleString('zh-CN', { hour12: false }) : '') +
-      (it.kline || it.desk ? ' · 点击放大' : '');
+    const base = (it.note ? it.note + ' · ' : '') + (it.src || '') +
+      (it.ts ? ' · ' + new Date(it.ts).toLocaleString('zh-CN', { hour12: false }) : '');
+    if (it.srcId === 'em_stock') {
+      return base + ' · 最新 ' + (it.asOf || '—') +
+        ' · 当日增减 ' + fmtSigned(it.chgZh, 0) + ' 张（' + fmtNum(it.zh, 0) + ' 张）' +
+        (it.lastNonZero ? ' · 上次非零 ' + it.lastNonZero.date + ' ' +
+          fmtNum(it.lastNonZero.value, 4) + ' 万吨' : '') +
+        ' · 点击放大';
+    }
+    return base + (it.kline || it.desk ? ' · 点击聚焦' : '');
   }
   /** 展开成扁平表，聚焦面板与刷新补值都用它 */
   function worldFlat () {
@@ -197,18 +227,18 @@
         '全球行情源暂时都不可达。本地产的 K 线、加工费、热力图不受影响，' +
         '点右上角「刷新」重试。</p>';
       $('worldNote').textContent = '源不可达';
-      S.focus = null;
+      if (S.focus) unfocusWorld(); else hideInspector();
       renderMarquee([]);
       renderFresh();
       return;
     }
 
-    // 聚焦的那一项在新数据里没了（源挂了），就自动退出聚焦，否则页面会卡在空面板上
-    if (S.focus && !worldFlat()[S.focus]) S.focus = null;
+    // 聚焦的那一项在新数据里没了（源挂了），就自动退出聚焦，否则右栏会卡在空面板上
+    if (S.focus && !worldFlat()[S.focus]) unfocusWorld();
 
-    // 聚焦时只补数值、不重建 DOM —— 重建会把图表实例拆掉，每 60 秒闪一次
-    if (S.focus && box.querySelector('.wfocus')) patchWorldValues();
-    else paintWorld();
+    // 右栏 Inspector 是独立宿主，重画 #world 不会拆它的图表 —— 可以放心整组重画
+    paintWorld();
+    if (S.focus) updateInspectorValues();
 
     $('worldNote').innerHTML = '实时 ' + res.groups.flatMap(g => g.items).filter(i => i.live).length +
       ' / 共 ' + res.groups.flatMap(g => g.items).length + ' 项 · 更新于 ' +
@@ -220,121 +250,108 @@
   }
 
   function tileHTML (it) {
+    // 仓单用中性蓝画趋势：红涨绿绿在这条线上没有意义（仓单下降不等于价格下跌），
+    // 沿用涨跌色会让人把「仓单降」读成「看空」。
+    const sparkColor = it.srcId === 'em_stock' ? '#0a84ff' : Charts.colorFor(it.pct);
     const spark = it.spark && it.spark.length > 3
-      ? Charts.spark(it.spark, { w: 130, h: 24, color: Charts.colorFor(it.pct) })
+      ? Charts.spark(it.spark, { w: 130, h: 24, color: sparkColor })
       : '';
     const on = S.focus === it.id;
-    return '<button class="mtile ' + cls(it.pct) + '" type="button" data-wid="' + esc(it.id) + '" ' +
+    const foot = footText(it);
+    return '<button class="mtile ' + chgCls(it) + '" type="button" data-wid="' + esc(it.id) + '" ' +
       'aria-pressed="' + on + '" title="' + esc(tipText(it)) + '">' +
-      '<span class="nm">' + esc(it.label) + '</span>' +
+      '<span class="nm">' + esc(it.label) +
+        (it.srcId === 'em_stock' && it.value === 0 ? '<i class="tagzero">清零</i>' : '') + '</span>' +
       '<span class="row"><span class="vv" data-f-v>' + esc(valText(it)) + '</span>' +
-      '<span class="pc ' + cls(it.pct) + '" data-f-p>' + esc(chgText(it)) + '</span></span>' +
+      '<span class="pc ' + chgCls(it) + '" data-f-p>' + esc(chgText(it)) + '</span></span>' +
       spark +
-      (it.live ? '' : '<span class="ft" data-f-t>日终 ' + esc(it.asOf || '') + '</span>') +
+      (foot ? '<span class="ft" data-f-t>' + esc(foot) + '</span>' : '') +
       '</button>';
   }
 
-  /** 紧凑瓦片：聚焦时其余项用这个，只留名字/数值/涨跌，一眼扫完不抢视线 */
-  function miniHTML (it) {
-    return '<button class="mtile c ' + cls(it.pct) + '" type="button" data-wid="' + esc(it.id) + '" ' +
-      'title="' + esc(tipText(it)) + '">' +
-      '<span class="c-nm">' + esc(it.label) + '</span>' +
-      '<span class="c-vv num" data-f-v>' + esc(valText(it)) + '</span>' +
-      '<span class="c-pc num ' + cls(it.pct) + '" data-f-p>' + esc(chgText(it)) + '</span>' +
-      '</button>';
+  /** 分组展开态：优先会话内的选择，默认见 WORLD_EXPAND_HINT */
+  function groupOpen (gid) {
+    if (S.open[gid] != null) return S.open[gid];
+    return WORLD_COLLAPSED_DEFAULT ? WORLD_EXPAND_HINT.includes(gid) : true;
   }
 
+  /** 折叠组的摘要：N 项 · 涨 x · 跌 y —— 不看具体数字也能先知道方向分布 */
+  function groupSummary (g) {
+    const u = g.items.filter(i => chgCls(i) === 'u').length;
+    const d = g.items.filter(i => chgCls(i) === 'd').length;
+    return g.items.length + ' 项 · 涨 ' + u + ' · 跌 ' + d;
+  }
+
+  /** 分组：标题始终是可点按钮（⌄ 开 / ⌃ 合），展开 = 完整网格，折叠 = 单行横向摘要 */
   function groupHTML (g) {
-    const focused = g.items.some(i => i.id === S.focus);
-    if (focused) {
-      const main = g.items.find(i => i.id === S.focus);
-      const side = g.items.filter(i => i.id !== S.focus);
-      return '<div class="mgroup focus">' +
-        '<div class="mgroup-h"><span>' + esc(g.label) + '</span>' +
-        '<span class="dim2">' + esc(g.note || '') + '</span><span class="rule"></span></div>' +
-        '<div class="wfocus">' +
-          '<div class="wfocus-main">' + focusHeadHTML(main) +
-            '<div class="wfocus-chart">' +
-              '<div class="ohlc" id="wfocusOhlc" aria-hidden="true"></div>' +
-              '<div class="wchart" id="wfocusChart"></div>' +
-            '</div>' +
-            '<div class="wfocus-meta" id="wfocusMeta">—</div>' +
-            '<p class="state wfocus-state" id="wfocusState">正在取历史序列…</p>' +
-          '</div>' +
-          '<div class="wfocus-side">' +
-            '<div class="wfocus-side-h">同组其他' +
-              (side.length ? '' : '（本组只有这一项）') + '</div>' +
-            side.map(miniHTML).join('') +
-          '</div>' +
-        '</div></div>';
-    }
-    const mini = !!S.focus;      // 有聚焦项时，其他组整体缩小
-    return '<div class="mgroup' + (mini ? ' mini' : '') + '">' +
-      '<div class="mgroup-h"><span>' + esc(g.label) + '</span>' +
-      '<span class="dim2">' + esc(g.note || '') + '</span><span class="rule"></span></div>' +
-      '<div class="mtiles' + (mini ? ' compact' : '') + '">' +
-      g.items.map(mini ? miniHTML : tileHTML).join('') + '</div></div>';
+    const open = groupOpen(g.id);
+    return '<div class="mgroup" data-open="' + (open ? 1 : 0) + '" id="grp-' + esc(g.id) + '">' +
+      '<button class="mgroup-sum" type="button" data-toggle="' + esc(g.id) +
+        '" aria-expanded="' + open + '" aria-controls="grp-' + esc(g.id) + '">' +
+        '<span class="chev" aria-hidden="true"></span>' +
+        '<span>' + esc(g.label) + '</span>' +
+        (g.note ? '<span class="g-note">' + esc(g.note) + '</span>' : '') +
+        (open ? '<span class="rule"></span>' : '<span class="g-count">' + groupSummary(g) + '</span>') +
+      '</button>' +
+      '<div class="mtiles">' + g.items.map(tileHTML).join('') + '</div></div>';
   }
 
+  /** 右栏 <section id="inspector"> 的头部：名称 + 现价 + 涨跌 + 截至 */
   function focusHeadHTML (it) {
-    return '<div class="wfocus-h">' +
-      '<b>' + esc(it.label) + '</b>' +
-      '<span class="vv num ' + cls(it.pct) + '" data-f-v2>' + esc(valText(it)) + '</span>' +
-      '<span class="pc num ' + cls(it.pct) + '" data-f-p2>' + esc(chgText(it)) + '</span>' +
-      '<span class="dim2 fnote" data-f-t2>' + esc(footText(it)) + '</span>' +
-      '<button class="btn spacer" type="button" data-wclose="1">收起</button></div>';
+    return '<b>' + esc(it.label) + '</b>' +
+      '<span class="vv num ' + chgCls(it) + '" data-f-v2>' + esc(valText(it)) + '</span>' +
+      '<span class="pc num ' + chgCls(it) + '" data-f-p2>' + esc(chgText(it)) + '</span>' +
+      '<span class="dim2 fnote" data-f-t2>' + esc(footText(it)) + '</span>';
   }
 
-  /** 只从已有 world 数据重建 DOM（切聚焦/退出聚焦时用，不重新打接口） */
+  /** 只从已有 world 数据重建 DOM（切聚焦/退聚焦/折叠切换时用，不重新打接口） */
   function paintWorld () {
     const box = $('world');
     if (!S.world || !S.world.groups.length) return;
     box.innerHTML = S.world.groups.map(groupHTML).join('');
   }
 
-  /** 聚焦状态下 60 秒刷新：只改数字，不动结构，图表不重建 */
-  function patchWorldValues () {
-    const flat = worldFlat();
-    document.querySelectorAll('#world [data-wid]').forEach(el => {
-      const it = flat[el.dataset.wid];
-      if (!it) return;
-      el.classList.remove('u', 'd', 'flat');
-      el.classList.add(cls(it.pct));
-
-      const setText = (sel, txt) => {
-        const n = el.querySelector(sel);
-        if (n) n.textContent = txt;
-      };
-      const setCls = (sel, base) => {
-        const n = el.querySelector(sel);
-        if (n) n.className = base + ' ' + cls(it.pct);
-      };
-
-      setText('[data-f-v]', valText(it));
-      setText('[data-f-v2]', valText(it));
-      setText('[data-f-p]', chgText(it));
-      setText('[data-f-p2]', chgText(it));
-      setText('[data-f-t2]', footText(it));
-      setCls('[data-f-p]', el.querySelector('.mtile.c') ? 'c-pc num' : 'pc');
-      setCls('[data-f-p2]', 'pc num');
-    });
+  /** 刷新时只改右栏 Inspector 头部现价，不重建图表实例 */
+  function updateInspectorValues () {
+    const it = worldFlat()[S.focus];
+    if (!it) return;
+    const set = (sel, txt, base) => {
+      const n = document.querySelector('#inspector ' + sel);
+      if (n) { n.textContent = txt; n.className = base + ' ' + chgCls(it); }
+    };
+    set('[data-f-v2]', valText(it), 'vv num');
+    set('[data-f-p2]', chgText(it), 'pc num');
+    set('[data-f-t2]', footText(it), 'dim2 fnote');
   }
 
-  /* ---- 聚焦的开关与取数 ---- */
+  function showInspector () { $('inspector').hidden = false; }
+  function hideInspector () { $('inspector').hidden = true; }
 
-  async function focusWorld (id) {
+  /* ---- 聚焦的开关与取数（图表宿主 = 右栏吸顶 Inspector） ---- */
+
+  function focusWorld (id) {
     if (S.focus === id) { unfocusWorld(); return; }
     S.focus = id;
     paintWorld();
+    showInspector();
+    $('wfocusHead').innerHTML = focusHeadHTML(worldFlat()[id]);
+    $('wfocusChart').innerHTML = '';          // 清掉上一张旧图占位
+    $('wfocusOhlc').innerHTML = '';
+    $('wfocusMeta').innerHTML = '—';
+    $('wfocusState').textContent = '正在取历史序列…';
     writeHash('w=' + id);
-    const host = document.querySelector('.wfocus');
-    if (host && host.scrollIntoView) host.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
-    await loadFocusSeries(id);
+    // 桌面右栏吸顶，聚焦图已在视野内无需滚动；手机 Inspector 回组内，要滚过去
+    if (matchMedia('(max-width: 780px)').matches) {
+      const ic = $('inspector');
+      if (ic && ic.scrollIntoView) ic.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    }
+    loadFocusSeries(id);
   }
 
   function unfocusWorld () {
     S.focus = null;
     paintWorld();
+    hideInspector();
     writeHash('');
   }
 
@@ -361,7 +378,8 @@
 
     if (s.kind === 'bars') {
       Charts.draw(host, s.bars, {
-        tail: FOCUS_DAYS, mas: [5, 10], key: 'wf|' + id,
+        tail: FOCUS_DAYS, mas: [5, 10], masColors: [Charts.GOLD, '#64d2ff'],
+        key: 'wf|' + id,
         readout: $('wfocusOhlc'), digits: it.digits, fontSize: 11, barSpacing: 5
       });
       const st = Charts.stats(s.bars.slice(-FOCUS_DAYS));
@@ -373,20 +391,38 @@
           fmtPct(st.pct, 2) + '</b>' + ' · 源 <b>' + esc(s.src) + '</b>'
         : '';
       state.innerHTML = '上图 <b>' + (it.label) + '</b> 日线 · 红涨绿跌 · ' +
-        '均线 MA5（蓝）/ MA10（青）· 双击图表复位缩放 · 再点一次瓦片收起';
+        '均线 MA5（金）/ MA10（青）· 双击图表复位缩放 · 收起看右栏顶部按钮';
     } else if (s.kind === 'line') {
+      // 仓单用中性蓝：红涨绿跌在仓单曲线上没有意义（仓单降 ≠ 看空），
+      // 沿用涨跌色会让人把库存变化读成价格方向。
+      const lineColor = it.srcId === 'em_stock' ? '#0a84ff' : Charts.colorFor(it.pct);
       Charts.drawLine(host, s.points, {
         key: 'wf|' + id, readout: $('wfocusOhlc'), digits: it.digits,
-        unit: s.unit || it.suffix || '', color: Charts.colorFor(it.pct), fontSize: 11
+        unit: s.unit || it.suffix || '', color: lineColor, fontSize: 11
       });
       const pts = s.points;
       const first = pts[0][1], last = pts[pts.length - 1][1];
+      const unit = s.unit || it.suffix || '';
+      let hi = pts[0], lo = pts[0];
+      for (const p of pts) { if (p[1] > hi[1]) hi = p; if (p[1] < lo[1]) lo = p; }
+      const lastNZ = it.srcId === 'em_stock' ? [...pts].reverse().find(p => p[1] > 0) : null;
       meta.innerHTML = '区间 <b>' + pts.length + '</b> 期（' + esc(pts[0][0]) + ' → ' +
-        esc(pts[pts.length - 1][0]) + '）· 区间 <b class="' + cls(last - first) + '">' +
-        fmtSigned(last - first, it.digits) + ' / ' + fmtPct(first ? (last - first) / first * 100 : null, 2) +
-        '</b> · 源 <b>' + esc(s.src) + '</b>';
-      state.innerHTML = '这一项数据源只给收盘价，所以画<b>折线</b>（不假装有开高低）· ' +
-        '双击图表复位缩放 · 再点一次瓦片收起';
+        esc(pts[pts.length - 1][0]) + '）· 高 <b>' + fmtNum(hi[1], it.digits) + '</b>（' + esc(hi[0]) + '）' +
+        ' · 低 <b>' + fmtNum(lo[1], it.digits) + '</b>（' + esc(lo[0]) + '）· 区间 <b class="' +
+        cls(last - first) + '">' + fmtSigned(last - first, it.digits) + ' / ' +
+        fmtPct(first ? (last - first) / first * 100 : null, 2) + '</b>' +
+        (unit ? ' ' + esc(unit) : '') + ' · 源 <b>' + esc(s.src) + '</b>';
+
+      // 归零必须解释清楚，否则「0」会被当成取数失败
+      const why = it.srcId === 'em_stock'
+        ? (last === 0
+            ? '仓单已<b>注销清零</b>' +
+              (lastNZ ? '，上次非零 <b>' + esc(lastNZ[0]) + '</b> = ' + fmtNum(lastNZ[1], it.digits) +
+                        ' ' + esc(unit || '万吨') : '') +
+              '。到期集中注销就会归零，接下来看的是重新注册的量与速度 —— 数据是真的，不是没取到。'
+            : '交易所仓单日频序列。仓单看增减，不看百分比。')
+        : '这一项数据源只给收盘价，所以画<b>折线</b>（不假装有开高低）。';
+      state.innerHTML = why + ' · 双击图表复位缩放 · 再点一次瓦片收起';
     } else {
       host.innerHTML = '';
       meta.innerHTML = '';
@@ -641,17 +677,148 @@
     return id;
   }
 
+  /** 情报流统一刷新的唯一入口：刷新 + 提示新增 + 触发宏观速览（内部节流） */
+  async function refreshNews () {
+    const n = await News.refresh();
+    S.lastNewsAt = Date.now();
+    if (n > 0) { renderFresh(); announce('情报流新增 ' + n + ' 条'); }
+    runMacro();
+    return n;
+  }
+
+  /** 大于某时限就补拉 K 线（后台被浏览器节流时，回来追平用） */
+  function loadKlineStale (now, maxAge) {
+    if (!S.lastKlineAt) return;
+    if (now - S.lastKlineAt > maxAge) loadKline();
+  }
+
   function startTimers () {
-    every(45e3, async () => {
-      const n = await News.refresh();
-      if (n > 0) { renderFresh(); announce('情报流新增 ' + n + ' 条'); }
-    }, 'news');
+    every(45e3, () => refreshNews(), 'news');
     every(60e3, () => { renderWorld(); }, 'world');
     every(5 * 60e3, () => { loadKline(); }, 'kline');
     every(60e3, () => { renderCalendar(); renderFresh(); }, 'cal');
   }
 
   function announce (t) { const el = $('live'); if (el) el.textContent = t; }
+
+  /* ======================================================================
+     8b. 宏观速览 —— 把已抓到的情报流里宏观/政策/产业类新条目，压缩成几条要点
+     · 只消费 News.state.items（绝不重新打接口），走 AI_PROXY（Cloudflare
+       Worker → DeepSeek）。前端不放任何密钥。
+     · 省 token：冷却 12 分钟 + 单日 30 次 + 每次最多喂 8 条、输出 5 条。
+     · 未配置 AI_PROXY.url = 整卡隐藏，不调任何 API、不花钱。
+     ====================================================================== */
+
+  /** 只从宏观相关频道筛候选，按 新→旧 排，限 maxNews 条 */
+  function macroCandidates () {
+    const want = new Set(MACRO_OVERVIEW.channels);
+    return News.state.items
+      .filter(x => { for (const c of x.channels) if (want.has(c)) return true; return false; })
+      .map(x => ({
+        t: x.title, s: x.summary || '', time: x.showTime,
+        ch: [...x.channels].find(c => want.has(c)) || ''
+      }))
+      .slice(0, MACRO_OVERVIEW.maxNews);
+  }
+
+  function macroConfigured () { return !!(AI_PROXY && AI_PROXY.url); }
+
+  /** 启动时定一次宏观卡形态：已配置→触发压缩；未配置→灰底提示但不调任何 API */
+  function initMacro () {
+    const card = $('macroCard');
+    if (!card) return;
+    if (macroConfigured()) { runMacro(); return; }
+    card.hidden = false;
+    $('macroNote').textContent = '未启用';
+    $('macroBody').innerHTML = '<p class="state-dashed">宏观速览未启用：在 ' +
+      'assets/config.js 配置 <b>AI_PROXY</b>（Cloudflare Worker → DeepSeek）后自动开启。' +
+      '未配置时零请求、零花费。</p>';
+  }
+
+  function showMacro (msgHtml, noteText) {
+    const card = $('macroCard');
+    if (!card) return;
+    card.hidden = false;
+    $('macroBody').innerHTML = '<p class="state" style="border:0;margin:0">' + msgHtml + '</p>';
+    $('macroNote').textContent = noteText || '—';
+  }
+
+  function renderMacro (points, nFeeds, empty, err) {
+    const body = $('macroBody'), card = $('macroCard');
+    if (!body || !card) return;
+    card.hidden = false;
+    $('macroNote').textContent = nFeeds ? '基于 ' + nFeeds + ' 条最新情报' : '—';
+    if (err) {
+      body.innerHTML = '<div class="state-error">宏观速览失败：' + esc(String(err.message || err)) + '</div>';
+      return;
+    }
+    if (!points.length) {
+      body.innerHTML = '<p class="state-empty">' +
+        (empty ? '本轮无值得提炼的宏观增量，跳过。' : '尚无宏观要点可提炼。') + '</p>';
+      return;
+    }
+    body.innerHTML = points.map(pt => {
+      const i = pt.indexOf('：') === -1 ? pt.indexOf(':') : pt.indexOf('：');
+      let tag = '', txt = pt;
+      if (i > 0 && i <= 3) { tag = pt.slice(0, i).trim(); txt = pt.slice(i + 1).trim(); }
+      return '<div class="mi"><div class="m-h">' +
+        (tag ? '<span class="tag">' + esc(tag) + '</span>' : '') +
+        '</div><p>' + mdLite(txt) + '</p></div>';
+    }).join('');
+  }
+
+  /** 调 DeepSeek（经代理）：只依据喂给它的快讯压缩，严禁编造 */
+  async function macroCall (cands) {
+    const body = {
+      prompt: '你是聚酯链驾驶舱的宏观速览。只依据下面提供的财经快讯，压缩成不超过 ' +
+        MACRO_OVERVIEW.maxPoints + ' 条要点，服务聚酯/能化产业链从业者。' +
+        '每条要点一句话，句首给一个不超过2字的分类标签（政策/货币/需求/供应/心态/海外），' +
+        '用冒号分隔。不要编造快讯里没有的数据，不要复述流水账。\n\n快讯（新→旧）：\n' +
+        cands.map((c, i) => (i + 1) + '. [' + c.ch + '] ' + c.time + ' ' + c.t +
+          (c.s ? ' — ' + c.s : '')).join('\n'),
+      maxTokens: 300,
+      temperature: 0.3
+    };
+    const r = await fetch(AI_PROXY.url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + (AI_PROXY.token || '')
+      },
+      body: JSON.stringify(body)
+    });
+    if (!r.ok) throw new Error('代理 HTTP ' + r.status);
+    const j = await r.json();
+    const raw = typeof j === 'string' ? j : String(j && (j.text || j.result || j.outputs) || '');
+    return raw.split(/[;\n]+/)
+      .map(x => x.replace(/^\s*\d+[.、)）]\s*/, '').trim())
+      .filter(Boolean)
+      .slice(0, MACRO_OVERVIEW.maxPoints);
+  }
+
+  async function runMacro () {
+    if (S.macro.busy || !macroConfigured()) return;
+    const now = Date.now();
+    if (S.macro.dayKey !== new Date(now).toDateString()) { S.macro.dayKey = new Date(now).toDateString(); S.macro.todayCount = 0; }
+    if (now - S.macro.lastRun < MACRO_OVERVIEW.cooldownMs) return;   // 冷却中，省 token
+    if (S.macro.todayCount >= MACRO_OVERVIEW.maxDaily) return;       // 当日天顶
+    const cands = macroCandidates();
+    if (!cands.length) return;
+    S.macro.busy = true;
+    showMacro('正在压缩 <b>' + cands.length + '</b> 条最新情报…', '宏观速览');
+    try {
+      const points = await macroCall(cands);
+      S.macro.lastRun = Date.now();
+      S.macro.todayCount++;
+      renderMacro(points, cands.length, !points.length);
+    } catch (e) {
+      // 调失败也推进冷却，避免网络抖动把配额烧穿
+      S.macro.lastRun = Date.now();
+      renderMacro([], cands.length, false, e);
+    } finally {
+      S.macro.busy = false;
+    }
+  }
 
   /* ======================================================================
      9. 终端模式
@@ -733,9 +900,12 @@
           for (const it of g.items) {
             say('    ' + esc(it.label.padEnd(14, ' ')) +
                 '<span class="hl">' + esc(String(fmtNum(it.value, it.digits))).padStart(11, ' ') + '</span>' +
-                '  <span class="' + cls(it.pct) + '">' + esc(fmtPct(it.pct, 2)).padStart(8, ' ') + '</span>' +
+                '  <span class="' + chgCls(it) + '">' + esc(chgText(it)).padStart(9, ' ') + '</span>' +
                 '  <span style="opacity:.6">' + esc(it.src || '') +
-                (it.live ? ' 实时' : ' 日终 ' + (it.asOf || '')) + '</span>');
+                (it.live ? ' 实时' : ' 日终 ' + (it.asOf || '')) +
+                (it.srcId === 'em_stock' && it.value === 0 && it.lastNonZero
+                  ? ' 上次非零 ' + esc(it.lastNonZero.date) + ' ' + fmtNum(it.lastNonZero.value, 4) + '万吨'
+                  : '') + '</span>');
           }
         }
         return;
@@ -981,13 +1151,22 @@
       }
       S.sym = b.dataset.code; selectSym();
     });
-    // 全球市场：点瓦片放大 / 再点收起 / 点「收起」按钮
+    // 全球市场：点折叠标题切换展开 / 点瓦片聚焦到右栏 Inspector
     $('world').addEventListener('click', e => {
+      const tg = e.target.closest('[data-toggle]');
+      if (tg) {
+        S.open[tg.dataset.toggle] = !groupOpen(tg.dataset.toggle);
+        paintWorld();
+        return;
+      }
       if (e.target.closest('[data-wclose]')) { unfocusWorld(); return; }
       const t = e.target.closest('[data-wid]');
       if (!t) return;
       focusWorld(t.dataset.wid);
     });
+    // 右栏 Inspector 的「收起」按钮
+    const icClose = $('inspClose');
+    if (icClose) icClose.addEventListener('click', () => unfocusWorld());
     // Esc 退出聚焦（终端开着的时候不抢）
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && S.focus && $('terminal').hidden) unfocusWorld();
@@ -999,7 +1178,7 @@
         const id = h.slice(2);
         if (S.world && worldFlat()[id] && S.focus !== id) focusWorld(id);
       } else if (S.focus && !h) {
-        S.focus = null; paintWorld();
+        unfocusWorld();
       }
     });
     $('heat').addEventListener('click', e => {
@@ -1019,11 +1198,15 @@
       $('btnRefresh').disabled = false;
     });
 
-    // 后台标签页不跑定时器，前台回来立刻补一次
+    // 后台标签页被浏览器节流到 ~1 发/分；前台回来立刻追平，而不是干等下一轮。
+    // 情报流用独立的 lastNewsAt，别和世界行情 / K 线混着算时限。
     document.addEventListener('visibilitychange', () => {
-      if (!document.hidden && S.world && Date.now() - S.world.at > 50e3) {
-        renderWorld(); renderCalendar();
-      }
+      if (document.hidden) return;
+      const now = Date.now();
+      if (S.lastNewsAt && now - S.lastNewsAt > 30e3) refreshNews();
+      if (S.world && now - S.world.at > 50e3) renderWorld();
+      loadKlineStale(now, 4 * 60e3);
+      renderCalendar(); renderFresh();
     });
   }
 
@@ -1036,7 +1219,10 @@
     }
     if (force) Desk.nukeCache();
     bindOnce();
-    if (!boot._newsInit) { boot._newsInit = true; News.init(); }
+    if (!boot._newsInit) {
+      boot._newsInit = true;
+      News.init().then(() => { S.lastNewsAt = Date.now(); initMacro(); });
+    }
 
     S.desk = await Desk.loadDesk();
     if (!S.desk) {
