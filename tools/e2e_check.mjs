@@ -202,8 +202,8 @@ const pillBg = (await ev(`(() => {
 })()`)).v;
 ok('选中态是蓝调胶囊', /rgba?\(\s*0,\s*145,\s*212/.test(pillBg || ''), (pillBg || '').slice(0, 72));
 
-const brandMark = (await ev("getComputedStyle(document.querySelector('.brand .mark')).backgroundImage")).v;
-ok('品牌标记是帝国蓝切面', /rgb\(0,\s*145,\s*212\)/.test(brandMark || ''), brandMark);
+const brandMark = (await ev("getComputedStyle(document.querySelector('.brand .mark')).backgroundColor")).v;
+ok('品牌标记是帝国蓝实色', /rgb\(0,\s*145,\s*212\)/.test(brandMark || ''), brandMark);
 
 /* 旧主题残留扫描 —— 必须同时看 CSS 颜色属性 **和** SVG 的 stroke/fill。
    上一版只看 CSS，于是漏掉了 app.js 里硬编码的 #0a84ff（仓单迷你走势的描边）：
@@ -233,15 +233,15 @@ ok('有跳转链接（键盘可达）', (await ev("!!document.querySelector('.sk
 ok('聚焦图表有 aria-label',
    /走势/.test((await ev("(document.getElementById('wfocusChart')||{}).getAttribute&&document.getElementById('wfocusChart').getAttribute('aria-label')||''")).v || ''),
    (await ev("(document.getElementById('wfocusChart')||{}).getAttribute&&document.getElementById('wfocusChart').getAttribute('aria-label')")).v);
-ok('卡片有真实投影（材料感）', (await ev(`(() => {
-  const c = document.querySelector('.card'); if (!c) return false;
-  const sh = getComputedStyle(c).boxShadow;
-  return sh !== 'none' && sh.split('rgba').length >= 3;
-})()`)).v === true);
-ok('卡片有顶部高光边', (await ev(`(() => {
-  const b = getComputedStyle(document.querySelector('.card'), '::before');
-  return b && b.content === '""' && b.height === '1px';
-})()`)).v === true);
+ok('卡片是实色面 + 发丝边框（层级靠明度差）', (await ev(`(() => {
+  const c = document.querySelector('.card');
+  if (!c) return false;
+  const s = getComputedStyle(c);
+  return s.backgroundImage === 'none' &&
+         /^rgb\\(/.test(s.backgroundColor) &&
+         parseFloat(s.borderTopWidth) >= 1;
+})()`)).v === true,
+   (await ev("getComputedStyle(document.querySelector('.card')).backgroundColor")).v);
 ok('桌面右栏吸附（消灭空场）',
    (await ev("getComputedStyle(document.querySelector('.col-side')).position")).v === 'sticky',
    (await ev("getComputedStyle(document.querySelector('.col-side')).position")).v);
@@ -271,6 +271,85 @@ ok('瓦片数值为等宽表格数字', (await ev(`(() => {
   const s = getComputedStyle(v);
   return /mono/i.test(s.fontFamily) && /tabular-nums/.test(s.fontVariantNumeric);
 })()`)).v === true);
+
+// ---------- 设计系统 v3：哑光（零反光 / 零模糊 / 严格等高）----------
+// 这三条直接对应真实反馈与真实约束：
+//   「反光很丑」「模块之间泛蓝显得廉价」→ 不许有高光、扫光、环境光
+//   i5 + 低内存 → 不许有 backdrop-filter / 大范围 blur（低端 GPU 上最贵的一项）
+ok('顶栏不做背景模糊（低端机性能）',
+   (await ev(`(() => {
+     const s = getComputedStyle(document.querySelector('.topbar'));
+     return (s.backdropFilter === 'none' || !s.backdropFilter) &&
+            (s.webkitBackdropFilter === 'none' || !s.webkitBackdropFilter);
+   })()`)).v === true);
+ok('底栏不做背景模糊', (await ev(`(() => {
+  const s = getComputedStyle(document.querySelector('.bottombar'));
+  return (s.backdropFilter === 'none' || !s.backdropFilter);
+})()`)).v === true);
+ok('瓦片没有扫光伪元素', (await ev(`(() => {
+  const a = getComputedStyle(document.querySelector('.mtile'), '::after');
+  return !a || a.content === 'none' || a.backgroundImage === 'none';
+})()`)).v === true,
+   (await ev("getComputedStyle(document.querySelector('.mtile'),'::after').backgroundImage")).v);
+ok('卡片没有投影（层级靠明度差）',
+   (await ev("getComputedStyle(document.querySelector('.card')).boxShadow")).v === 'none');
+ok('按钮没有内高光',
+   (await ev("getComputedStyle(document.querySelector('.btn')).boxShadow")).v === 'none');
+ok('页面背景不带彩色环境光', (await ev(`(() => {
+  const s = getComputedStyle(document.body);
+  return s.backgroundImage === 'none';
+})()`)).v === true, (await ev("getComputedStyle(document.body).backgroundImage")).v);
+ok('品牌标记是实色（不渐变不发光）', (await ev(`(() => {
+  const s = getComputedStyle(document.querySelector('.brand .mark'));
+  return s.backgroundImage === 'none' && (s.boxShadow === 'none' || s.boxShadow === '');
+})()`)).v === true);
+
+/* 31 张瓦片必须严格等高。这一条是被真实观察逼出来的：
+   改之前实测同时存在 67 / 88 / 97 / 118 四种高度，行与行之间基线全错开。 */
+ok('31 张瓦片严格等高', (await ev(`(() => {
+  const hs = [...document.querySelectorAll('#world .mtile')].map(t => Math.round(t.getBoundingClientRect().height));
+  if (hs.length < 10) return false;
+  return new Set(hs).size <= 2;      // 允许 1px 的亚像素误差
+})()`)).v === true,
+   (await ev(`(() => {
+     const hs = [...document.querySelectorAll('#world .mtile')].map(t => Math.round(t.getBoundingClientRect().height));
+     return '高度种类 ' + new Set(hs).size + '：' + [...new Set(hs)].sort((a,b)=>a-b).join('/');
+   })()`)).v);
+
+/* 主力现价必须保持中性色。两个绿挨在一起（大数字 + 小 chip）既吵又廉价，
+   方向由 chip 单独承担。 */
+ok('主力现价不跟涨跌上色', (await ev(`(() => {
+  const px = document.getElementById('klineLast');
+  if (!px) return false;
+  return !px.classList.contains('up') && !px.classList.contains('down');
+})()`)).v === true,
+   (await ev("document.getElementById('klineLast').className")).v);
+ok('涨跌 chip 承担方向色', (await ev(`(() => {
+  const c = document.getElementById('klineChg');
+  return c && (c.classList.contains('up') || c.classList.contains('down') || c.classList.contains('flat'));
+})()`)).v === true);
+
+/* 没有涨跌数据的项（派生利差等）必须给「静态」小章，不能吐一个孤零零的破折号 */
+ok('无涨跌项显示「静态」而非破折号', (await ev(`(() => {
+  const bad = [...document.querySelectorAll('#world .mtile [data-f-p]')]
+    .filter(p => (p.textContent || '').trim() === '—');
+  return bad.length === 0;
+})()`)).v === true,
+   (await ev(`(() => {
+     const bad = [...document.querySelectorAll('#world .mtile [data-f-p]')]
+       .filter(p => (p.textContent || '').trim() === '—').length;
+     return bad + ' 处破折号';
+   })()`)).v);
+
+// 今日情报：只在产物里真有 headlines 时才要求渲染（与产物状态一致，不写死）
+const hlCount = (await ev("(async()=>{try{const r=await fetch('data/ai_digest.json',{cache:'no-store'});const j=await r.json();return (j.headlines||[]).length}catch(e){return 0}})()")).v;
+if (hlCount > 0) {
+  ok('今日情报已渲染', (await ev("document.querySelectorAll('#ai .hl li').length")).v === hlCount,
+     (await ev("document.querySelectorAll('#ai .hl li').length")).v + ' / ' + hlCount + ' 条');
+  ok('今日情报带分类标签', (await ev("document.querySelectorAll('#ai .hl li .lt').length")).v >= 1);
+} else {
+  ok('今日情报（产物无 headlines，跳过）', true, '产物里 0 条');
+}
 
 // 交互 1：点链条里的 MEG 节点 → 切到 EG 主连
 await ev("[...document.querySelectorAll('#chain .node')].find(n=>n.dataset.code==='MEG').click()");

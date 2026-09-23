@@ -1,15 +1,22 @@
 #!/usr/bin/env python3
-"""用 DeepSeek 给驾驶舱生成「今日复盘 + 异动归因」，产出 data/ai_digest.json。
+"""用 DeepSeek 给驾驶舱生成「今日复盘 + 异动归因 + 今日情报」，产出 data/ai_digest.json。
+
+两块输出，一次调用：
+  · digest / drivers —— 基于你自己的截面数据做复盘与归因
+  · headlines       —— 只基于【新闻标题】压出的「今日情报」，3-5 条，扫读用
 
 设计目标是「最少 token」，不是「最会用 AI」：
 
-  1. 先用关键词字典筛新闻，再喂给模型。逐条新闻调 LLM 是最贵的错法 —— 90% 的条目
-     跟聚酯链无关。筛选这一步 0 token。
-  2. 整个上下文算 sha256 存进产物。数据没变就直接复用上次结果，一次 API 都不打。
-  3. 一天最多一次；`--anomaly-only` 让它只在真有品种异动时才调。
+  1. 只喂新闻【标题】，不喂正文摘要。标题本身已经是编辑压过一轮的信息，
+     正文会成倍放大 token 而边际信息很少 —— 这是这套流程里最省的一刀。
+     筛选这一步在本地做，0 token。
+  2. 翻页取多批快讯（默认 3 页 ≈ 180 条），保证「今日情报」覆盖一整天，
+     而不是只有最近几小时。翻页不花 token。
+  3. 整个上下文算 sha256 存进产物。数据没变就直接复用上次结果，一次 API 都不打。
   4. system prompt 完全固定 → DeepSeek 的磁盘前缀缓存按 cache-hit 价计费（约为未命中的 1/50）。
-  5. 输出上限 400 token，只要 JSON。
-  6. `--dry-run` 不发请求，只把 prompt 和 token 估算打出来，你可以先看再决定花不花。
+  5. `--dry-run` 不发请求，只把 prompt 和 token 估算打出来，你可以先看再决定花不花。
+
+实测一次约 1500 输入 + 500 输出，粗算 $0.0002 —— 一天一次，一个月不到一分钱。
 
 密钥只从环境变量或 .env 读，永远不写进任何会被提交的文件。
 
@@ -30,6 +37,7 @@ import os
 import re
 import sys
 import urllib.error
+import urllib.parse
 import urllib.request
 from datetime import datetime, timezone, timedelta
 
@@ -70,7 +78,10 @@ for _w in [
     "美国就业", "非农就业", "国债", "收益率", "债市", "央行", "货币政策", "降准", "MLF",
     "逆回购", "资金面", "社零", "社会消费品零售", "CPI", "PPI", "PMI", "工业增加值",
     "房地产", "出口", "进口", "外贸", "美元指数", "美债", "关税", "GDP", "M2", "社融",
-    "银行间", "LPR", "招标", "中标",
+    "银行间", "LPR",
+    # 注：这里刻意不收「中标」「招标」—— 它们本意是指国债中标利率，
+    # 但裸词会捞进一堆「某某公司中标某工程项目」的公司公告，纯噪音。
+    # 国债中标本来就会命中「国债」，不需要这两个词。
 ]:
     KW_TIER[_w] = 2
 for _w in [
@@ -85,6 +96,11 @@ for _w in [
 
 MIN_SCORE = 2.0          # 低于这个分数不进上下文
 WEAK_QUOTA = 3           # 全是泛词命中的条目，最多留 3 条
+
+# 太泛的词：单独出现时基本只会捞到公司公告，对看板没有价值。
+# 前端的频道过滤保留它们（那边要的是覆盖广度），但喂模型时权重归零 ——
+# 例：「某某公司中标某工程项目」会命中「中标」，而这里要的是「国债中标利率」。
+NOISE_KW = {"中标", "招标"}
 
 # config.js 解析失败时的兜底关键词
 FALLBACK_KW = [
@@ -135,32 +151,79 @@ def channel_keywords() -> tuple[list[str], str]:
 
 # ---------------------------------------------------------------- 取新闻
 
-def fetch_news(page_size: int = 60) -> list[dict]:
-    url = ("https://np-listapi.eastmoney.com/comm/web/getFastNewsList"
-           f"?client=web&biz=web_724&fastColumn=102&sortEnd=&pageSize={page_size}&req_trace=1")
-    req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
-    with urllib.request.urlopen(req, timeout=15) as r:
-        data = json.loads(r.read().decode("utf-8", "replace"))
-    return (data.get("data") or {}).get("fastNewsList") or []
+def fetch_news(page_size: int = 60, pages: int = 3) -> list[dict]:
+    """取快讯。东财的 sortEnd 是「往**更早**翻页」的游标 ——
+    传空拿最新一批，再把返回的 sortEnd 传回去就能继续往回翻。
+
+    翻多页是为了让「今日情报」真的覆盖一整天，而不是只有最近几小时。
+    翻页不花 token（本地过滤），只花几次免费请求。
+    """
+    out: list[dict] = []
+    cursor = ""
+    for _ in range(max(1, pages)):
+        url = ("https://np-listapi.eastmoney.com/comm/web/getFastNewsList"
+               f"?client=web&biz=web_724&fastColumn=102"
+               f"&sortEnd={urllib.parse.quote(cursor)}&pageSize={page_size}&req_trace=1")
+        req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(req, timeout=15) as r:
+            data = json.loads(r.read().decode("utf-8", "replace"))
+        d = data.get("data") or {}
+        batch = d.get("fastNewsList") or []
+        if not batch:
+            break
+        out.extend(batch)
+        cursor = d.get("sortEnd") or ""
+        if not cursor:
+            break
+    return out
 
 
-def pick_news(items: list[dict], kws: list[str], limit: int) -> tuple[list[dict], dict]:
+def pick_news(items: list[dict], kws: list[str], limit: int,
+              broad: bool = False) -> tuple[list[dict], dict]:
     """按分级权重挑新闻。
 
-    返回 (入选条目, 统计)。分数 = Σ 命中词的权重。这与前端「频道命中」是两套口径：
-    页面要的是覆盖广度，喂模型要的是信噪比，所以这里额外做了分级和配额。
+    两种口径，对应两种用途，不要合并：
+
+      broad=False —— 给「复盘」用。分数 ≥ MIN_SCORE 才进，强相关优先、泛词有配额。
+                     复盘要的是信噪比。
+      broad=True  —— 给「今日情报」用。只要命中任意关键词（≥1.0）就收，
+                     按时间从新到旧、粗去重后取前 limit 条。情报要的是**覆盖度**：
+                     用户要的就是「一天发生了这么多事情」。
+
+    两者都只按【标题】打分（broad 模式尤其如此）—— 因为送进模型的也只有标题，
+    用正文摘要打分会把「标题看着无关、摘要里提了一嘴」的条目捞进来，反而更吵。
     """
     scored = []
     for x in items:
-        text = f"{x.get('title', '')} {x.get('summary', '')}"
+        title = str(x.get("title", ""))
+        text = title if broad else f"{title} {x.get('summary', '')}"
         score, hits = 0.0, []
         for k in kws:
             if k in text:
-                w = KW_TIER.get(k, 1.0)
-                score += w
+                if k in NOISE_KW:          # 泛词：只命中它不算数
+                    continue
+                score += KW_TIER.get(k, 1.0)
                 hits.append(k)
-        if score >= MIN_SCORE:
+        if score >= (1.0 if broad else MIN_SCORE):
             scored.append((score, hits, str(x.get("showTime") or ""), x))
+
+    if broad:
+        # 覆盖度优先：新的在前；前 14 个字相同的视为同一件事，只留一条
+        scored.sort(key=lambda t: t[2], reverse=True)
+        chosen, seen = [], set()
+        for _, _, _, x in scored:
+            key = str(x.get("title") or "").strip()[:14]
+            if key in seen:
+                continue
+            seen.add(key)
+            chosen.append(x)
+            if len(chosen) >= limit:
+                break
+        stat = {"candidates": len(items), "scored": len(scored),
+                "strong": len(scored), "weak": 0, "used": len(chosen),
+                "top_hits": [], "broad": True}
+        return chosen, stat
+
     # 分高的在前；同分时新的在前
     scored.sort(key=lambda t: (-t[0], t[2]), reverse=False)
 
@@ -177,6 +240,7 @@ def pick_news(items: list[dict], kws: list[str], limit: int) -> tuple[list[dict]
         "weak": len(weak),
         "used": len(chosen),
         "top_hits": ["+".join(h[:3]) for _, h, _, _ in chosen[:5]],
+        "broad": False,
     }
     return [x for _, _, _, x in chosen], stat
 
@@ -235,13 +299,16 @@ def build_context(desk: dict, news: list[dict]) -> str:
     if s:
         L.append("上期摘要: " + s[:180].rstrip("；") + "…")
 
-    # 已筛过的新闻，压到一行一条
+    # 已筛过的新闻，压到一行一条。
+    # ⚠ 只喂【标题】。标题本身就已经是编辑压过一轮的信息，正文摘要会成倍放大 token，
+    #   而边际信息很少 —— 这是这套流程里最省的一刀。提示词里也明说「只有标题」，
+    #   免得模型自己脑补正文。
     if news:
         L.append("")
-        L.append("# 命中关键词的新闻（按相关度排序）")
+        L.append("# 今日新闻标题（只有标题，没有正文，不要推断标题以外的内容）")
         for x in news:
             t = (x.get("title") or "").replace("\n", " ").strip()
-            L.append("- " + t[:54])
+            L.append("- " + t[:46])
     return "\n".join(L)
 
 
@@ -251,8 +318,12 @@ SYSTEM = (
     "输出一个 JSON 对象，字段固定为：\n"
     '{"digest": "2-3 句中文复盘，说明今天的核心矛盾与成本-需求传导是否顺畅",\n'
     ' "drivers": [{"code": "品种代码", "text": "一句话归因"}],\n'
+    ' "headlines": [{"tag": "分类标签，2 字以内", "text": "一句话，不超过 22 字"}],\n'
     ' "warnings": ["数据或口径上的提醒"]}\n'
     "drivers 只写异动幅度大或价差明显变化的品种，最多 3 条；没有就留空数组。\n"
+    "headlines 是「今日情报」：只依据【今日新闻标题】那一段，把今天发生的、"
+    "对能化与聚酯有意义的事压成 3-5 条。一条一件事，不合并、不复述、不展开；"
+    "标题里没提到的事一律不写；标题之间讲同一件事的只留一条。\n"
     "写作要求：数字写进句子里，不要孤立罗列；不要用「不是X而是Y」这种句式；"
     "不要用「首先/其次/最后」这类机械连接词；不要写免责声明。"
 )
@@ -333,7 +404,12 @@ def main() -> int:
     ap.add_argument("--model", default=os.environ.get("DEEPSEEK_MODEL", "deepseek-v4-flash"))
     ap.add_argument("--max-out", type=int, default=700, help="输出上限 token（关掉 thinking 后 700 很宽裕）")
     ap.add_argument("--thinking", action="store_true", help="开启思考模式（更准但更贵，且需要更大的 max-out）")
-    ap.add_argument("--news-limit", type=int, default=10, help="喂给模型的新闻条数，压 token 的主要旋钮")
+    ap.add_argument("--news-limit", type=int, default=32,
+                    help="喂给模型的新闻标题条数上限。只喂标题，所以可以比原来多带一些，"
+                         "覆盖一整天的动静；这仍是压 token 的主要旋钮")
+    ap.add_argument("--pages", type=int, default=3,
+                    help="翻几页快讯（每页 60 条）。翻页不花 token，"
+                         "只影响「今日情报」能覆盖多长时间 —— 3 页约半天到一天")
     ap.add_argument("--anomaly", type=float, default=0.0,
                     help="只有某品种 |涨跌幅| 超过该值才调用，例如 2 表示 2%%")
     ap.add_argument("--temperature", type=float, default=0.3)
@@ -356,10 +432,10 @@ def main() -> int:
     # 1) 关键词先筛，这一步不花 token
     kws, kw_src = channel_keywords()
     try:
-        raw_news = fetch_news(60)
-        news, nstat = pick_news(raw_news, kws, args.news_limit)
-        news_note = (f"抓到 {len(raw_news)} 条 → 过阈 {nstat['scored']} 条"
-                     f"（强相关 {nstat['strong']} / 泛词 {nstat['weak']}）→ 送入 {nstat['used']} 条")
+        raw_news = fetch_news(60, args.pages)
+        news, nstat = pick_news(raw_news, kws, args.news_limit, broad=True)
+        news_note = (f"翻 {args.pages} 页拿到 {len(raw_news)} 条 → 命中 {nstat['scored']} 条"
+                     f" → 去重后送入 {nstat['used']} 条【标题】")
     except Exception as e:                                   # noqa: BLE001
         news, nstat = [], {}
         news_note = f"新闻源不可达（{e}），本次只用行情数据"
@@ -447,11 +523,13 @@ def main() -> int:
         "as_of": desk.get("as_of"),
         "digest": parsed.get("digest", ""),
         "drivers": parsed.get("drivers") or [],
+        # 今日情报：只由新闻标题压出来，一天 3-5 条，扫读用
+        "headlines": parsed.get("headlines") or [],
         "warnings": parsed.get("warnings") or [],
         "tokens": est,
         "peak": peak,
         "thinking": bool(args.thinking),
-        "inputs": {"headlines": len(news), "context_chars": len(context)},
+        "inputs": {"news_titles": len(news), "context_chars": len(context)},
     }
     json.dump(payload, open(OUT, "w", encoding="utf-8"), ensure_ascii=False, indent=2)
 
@@ -461,6 +539,8 @@ def main() -> int:
     print(f"     复盘：{payload['digest']}")
     for d in payload["drivers"]:
         print(f"     · {d.get('code')} {d.get('text')}")
+    for h in payload["headlines"]:
+        print(f"     [情报] {h.get('tag', '')} {h.get('text', '')}")
     return 0
 
 

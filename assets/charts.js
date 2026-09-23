@@ -266,9 +266,19 @@ const Charts = (() => {
       it.candle = it.chart.addCandlestickSeries({
         upColor: UP, downColor: DOWN, borderUpColor: UP, borderDownColor: DOWN,
         wickUpColor: UP, wickDownColor: DOWN,
-        priceLineVisible: false, lastValueVisible: true
+        priceLineVisible: true, lastValueVisible: !!o.lastValue
       });
     }
+    /* 最后价在价格轴上的那个色块跟着涨跌走，会在旁边再多出一块红/绿。
+       主力 K 线卡上方已经有一个大号现价，所以默认关掉它（o.lastValue 默认 false），
+       只在聚焦面板（没有大号现价可看）里打开。 */
+    it.candle.applyOptions({
+      lastValueVisible: !!o.lastValue,
+      priceLineVisible: true,
+      priceLineColor: 'rgba(255,255,255,.22)',
+      priceLineWidth: 1,
+      priceLineStyle: 2
+    });
     it.digits = o.digits == null ? (o.digitsAuto ? autoDigits(data) : 2) : o.digits;
 
     const periods = o.mas || [5, 20];

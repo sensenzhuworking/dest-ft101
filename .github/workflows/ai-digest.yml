@@ -48,7 +48,7 @@ jobs:
         if: always()
         run: |
           if [ -f data/ai_digest.json ]; then
-            python3 -c "import json;d=json.load(open('data/ai_digest.json',encoding='utf-8'));t=d.get('tokens',{});print('模型    :',d.get('model'));print('复用上次:',d.get('cached'));print('tokens  :',t);print('输入新闻:',(d.get('inputs') or {}).get('headlines'),'条');print('复盘    :',(d.get('digest') or '')[:200])"
+            python3 -c "import json;d=json.load(open('data/ai_digest.json',encoding='utf-8'));t=d.get('tokens',{});print('模型    :',d.get('model'));print('复用上次:',d.get('cached'));print('tokens  :',t);print('输入标题:',(d.get('inputs') or {}).get('news_titles'),'条');print('复盘    :',(d.get('digest') or '')[:200]);print('今日情报:',len(d.get('headlines') or []),'条')"
           else
             echo "::warning::没有生成 data/ai_digest.json，看上面「生成复盘」那一步的报错"
           fi

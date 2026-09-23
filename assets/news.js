@@ -19,7 +19,9 @@ const News = (() => {
     done: false,
     paused: false,
     timer: null,
-    lastNew: 0
+    lastNew: 0,
+    lastSig: '',        // 上次渲染时的外观签名（同签名 = 跳过 DOM 重建）
+    lastFetch: 0
   };
 
   let listEl, metaEl, autoEl, moreBtn;
@@ -140,8 +142,20 @@ const News = (() => {
     return state.items.filter(x => x.channels.has(state.channel));
   }
 
+  /** 当前视图的「外观签名」：频道 + 条数 + 哪些条目标着「新」+ 头条 code。
+   *  45 秒一轮的刷新里，绝大多数轮次什么都没有变（东财那边没有新快讯），
+   *  但原来每轮都无条件重建整个列表的 DOM —— 60 条 × 关键词高亮正则。
+   *  低端机上这是白烧 CPU。签名没变就只更新底部那行元信息，不动列表。 */
+  function viewSig () {
+    let news = '';
+    for (const x of state.items) if (x.isNew) news += x.code + ',';
+    return state.channel + '|' + state.items.length + '|' + news + '|' +
+           (state.items[0] ? state.items[0].code : '');
+  }
+
   function render () {
     if (!listEl) return;
+    state.lastSig = viewSig();
     const list = current();
     if (!list.length) {
       listEl.innerHTML = '<p class="state" style="border:0;margin:0;padding:8px 2px">' +
@@ -295,7 +309,10 @@ const News = (() => {
       let kept = 0;
       for (const x of state.items) { if (x.isNew) { kept++; if (kept > 12) x.isNew = false; } }
       state.lastFetch = Date.now();
-      render();
+      // 外观没变就不重建列表（见 viewSig 的说明）。元信息仍要更新 ——
+      // 底部那行「最新 X 分钟前」是每分钟都在走的。
+      if (viewSig() === state.lastSig) paintMeta(current().length);
+      else render();
       kick();
       return state.lastNew;
     } catch (e) {

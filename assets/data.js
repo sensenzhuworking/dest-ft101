@@ -472,7 +472,11 @@ const Desk = (() => {
       const a = picks[it.from[0]], b = picks[it.from[1]];
       if (a && b) {
         const v = a.value - b.value;
-        picks[it.id] = { value: +v.toFixed(4), chg: null, pct: null, live: a.live, src: '派生' };
+        /* 涨跌也从两个分量各自的涨跌相减得出。
+           以前这里写死 chg: null，于是 2s10s 那一格永远挂着一个孤零零的破折号 ——
+           看着像取数失败，其实只是没算。现在它有真实的日变化。 */
+        const chg = (isFinite(a.chg) && isFinite(b.chg)) ? +(a.chg - b.chg).toFixed(4) : null;
+        picks[it.id] = { value: +v.toFixed(4), chg, pct: null, live: a.live, src: '派生' };
       }
     }
 
@@ -590,6 +594,14 @@ function fmtSigned (v, digits = 2) {
   if (v === null || v === undefined || !isFinite(v)) return '—';
   const n = Number(v);
   return (n > 0 ? '+' : '') + fmtNum(n, digits);
+}
+
+/** 去掉无意义的尾随零：1.0000 → 1 · 0.5000 → 0.5 · 0.0150 → 0.015
+ *  只用在脚注、提示这类散文语境里。表格与数值列仍走 fmtNum，
+ *  那边需要固定小数位来保证等宽数字纵向对齐。 */
+function fmtTrim (v, digits = 4) {
+  if (v === null || v === undefined || !isFinite(v)) return '—';
+  return String(Number(Number(v).toFixed(digits)));
 }
 
 /** 简洁时间：今天显示时分，昨天加前缀，更早显示月-日 */
