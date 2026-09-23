@@ -17,22 +17,22 @@
 const Charts = (() => {
 
   /* 与 assets/app.css 的 token 保持同一套：这里只改色值，不动任何绘图逻辑。
-     亮金只做「信号」：主力 K 线 MA 保持冷功能性蓝/灰（每日不抢眼），
-     聚焦图（右栏 Inspector）MA 用亮金 —— 聚焦本身就是信号时刻。 */
-  const UP = '#ff453a';       // 涨 = 红（中国习惯）· systemRed dark
-  const DOWN = '#30d158';     // 跌 = 绿 · systemGreen dark
-  const GOLD = '#f6cd72';     // 亮金（保时捷香槟金）—— 聚焦图 MA5（对应 app.css --ic）
-  const IC = '#5a8fd6';       // 冷功能性蓝 —— 主力 K 线 MA5（去旧的蓝强调，退成功能色）
-  const GREY = '#98989d';     // systemGray —— MA20，与蓝拉开距离
-  const SEAGLASS = '#64d2ff'; // 浅蓝 —— MA10
-  const FG2 = '#b9bfcb';   // 坐标轴文字 —— 与新白金平台同步提亮
-  const GRID = 'rgba(255,255,255,.042)';   // 网格极淡：有刻度感但不抢走势
+     帝国蓝只做「信号」：聚焦图 MA5 用蓝（聚焦本身就是信号时刻），
+     主力 K 线 MA 同样蓝/灰各司其职；红绿只报涨跌，别的一律不沾。 */
+  const UP = '#f0554e';       // 涨 = 红（中国习惯）· 与 app.css --up 同源
+  const DOWN = '#27c08a';     // 跌 = 绿 · 与 app.css --down 同源
+  const ACCENT = '#0091d4';   // Pool Blue —— 主力 MA5 / 聚焦图 MA5（对应 app.css --ic）
+  const IC = ACCENT;          // 主力 K 线 MA5
+  const GREY = '#9d9d9d';     // Cool Grey —— MA20 / 聚焦图 MA10
+  const SEAGLASS = '#009cbc'; // Seaglass —— 仓单折线等第二义场景
+  const FG2 = '#8a93a5';      // 坐标轴文字 —— 安静的冷灰
+  const GRID = 'rgba(255,255,255,.045)';   // 网格极淡：有刻度感但不抢走势
   const BORDER = 'rgba(255,255,255,.09)';
-  /* 十字光标：垂直=金色细点线，水平=金色虚线端到端。
-     金色是「当前指针」的信号，不与涨跌色混淆；深金底色标签压得住白字。 */
-  const X_VERT = 'rgba(246,205,114,.55)';
-  const X_HORZ = 'rgba(246,205,114,.32)';
-  const X_LABEL = '#4b3a12';
+  /* 十字光标：垂直=蓝细点线，水平=蓝虚线端到端。
+     蓝是「当前指针」的信号，不与涨跌色混淆；深海军蓝标签压得住白字。 */
+  const X_VERT = 'rgba(0,145,212,.55)';
+  const X_HORZ = 'rgba(0,145,212,.32)';
+  const X_LABEL = '#0a2a42';
 
   const MARGINS = { top: .08, bottom: .26 };
   /** 触屏设备：手指在右侧刻度上竖滑会被当成「拖价格轴」，
@@ -379,5 +379,5 @@ const Charts = (() => {
   }
   window.addEventListener('resize', () => { clearTimeout(resize._t); resize._t = setTimeout(resize, 120); });
 
-  return { draw, drawLine, resize, spark, colorFor, ma, stats, dispose, esc, COARSE, GOLD };
+  return { draw, drawLine, resize, spark, colorFor, ma, stats, dispose, esc, COARSE, ACCENT, GREY };
 })();

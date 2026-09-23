@@ -161,16 +161,21 @@ if (aiCode === 200) {
 ok('日历过期守卫为空（数据未过期）',
    ((await ev("document.getElementById('calWarn').textContent")).v || '') === '');
 
-// ---------- 本轮新增：配色已改帝国理工蓝 ----------
+// ---------- 本轮新增：黑金主题（暖金强调 + 中性近黑面） ----------
 const pillBg = (await ev(`getComputedStyle(document.querySelector('#symTabs button[aria-pressed=true]')).backgroundColor`)).v;
-ok('选中态是帝国理工蓝 #003e74', pillBg === 'rgb(0, 62, 116)', pillBg);
+ok('选中态是金调胶囊（不再是蓝底）', /rgba?\(\s*224,\s*169,\s*74/.test(pillBg || ''), pillBg);
 const accent = (await ev("getComputedStyle(document.documentElement).getPropertyValue('--ic').trim()")).v;
-ok('强调色变量为 #0091d4', accent === '#0091d4', accent);
-const oldAmber = (await ev(`[...document.querySelectorAll('*')].some(el=>{
+ok('强调色变量为暖金 #e0a94a', accent === '#e0a94a', accent);
+const upDown = (await ev(`[getComputedStyle(document.documentElement).getPropertyValue('--up').trim(),
+  getComputedStyle(document.documentElement).getPropertyValue('--down').trim()].join(',')`)).v;
+ok('涨红 #db6b61 / 跌绿 #5cb27a（低饱和）', upDown === '#db6b61,#5cb27a', upDown);
+const brandGold = (await ev("getComputedStyle(document.querySelector('.brand .mark')).backgroundImage")).v;
+ok('品牌标记已上金（黑金主题落地）', /rgb\(224,\s*169,\s*74\)/.test(brandGold || ''), brandGold);
+const oldBlue = (await ev(`[...document.querySelectorAll('*')].some(el=>{
   const s=getComputedStyle(el);
-  return /224,\\s*169,\\s*74/.test(s.color+s.backgroundColor+s.borderLeftColor+s.borderTopColor);
+  return /10,\\s*132,\\s*255/.test(s.color+s.backgroundColor+s.borderLeftColor+s.borderTopColor);
 })`)).v;
-ok('全站已无琥珀色残留', oldAmber === false);
+ok('全站已无旧蓝强调残留', oldBlue === false);
 
 // 交互 1：点链条里的 MEG 节点 → 切到 EG 主连
 await ev("[...document.querySelectorAll('#chain .node')].find(n=>n.dataset.code==='MEG').click()");

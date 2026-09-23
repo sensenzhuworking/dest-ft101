@@ -227,18 +227,18 @@
         '全球行情源暂时都不可达。本地产的 K 线、加工费、热力图不受影响，' +
         '点右上角「刷新」重试。</p>';
       $('worldNote').textContent = '源不可达';
-      if (S.focus) unfocusWorld(); else hideInspector();
+      if (S.focus) unfocusWorld();
       renderMarquee([]);
       renderFresh();
       return;
     }
 
-    // 聚焦的那一项在新数据里没了（源挂了），就自动退出聚焦，否则右栏会卡在空面板上
+    // 聚焦的那一项在新数据里没了（源挂了），就自动退出聚焦，否则面板会卡在空图上
     if (S.focus && !worldFlat()[S.focus]) unfocusWorld();
 
-    // 右栏 Inspector 是独立宿主，重画 #world 不会拆它的图表 —— 可以放心整组重画
+    // #world 整组重画不会拆聚焦宿主（它在 #world 外面，只被移动、不被重建）
     paintWorld();
-    if (S.focus) updateInspectorValues();
+    if (S.focus) updateFocusValues();
 
     $('worldNote').innerHTML = '实时 ' + res.groups.flatMap(g => g.items).filter(i => i.live).length +
       ' / 共 ' + res.groups.flatMap(g => g.items).length + ' 项 · 更新于 ' +
@@ -308,15 +308,37 @@
   function paintWorld () {
     const box = $('world');
     if (!S.world || !S.world.groups.length) return;
+    const host = $('wfocusHost');
+    // 重写 innerHTML 前先把聚焦宿主挪出 #world，否则它会连同旧分组一起被销毁
+    if (host && host.parentElement === box) box.insertAdjacentElement('afterend', host);
     box.innerHTML = S.world.groups.map(groupHTML).join('');
+    positionFocusHost();
   }
 
-  /** 刷新时只改右栏 Inspector 头部现价，不重建图表实例 */
-  function updateInspectorValues () {
+  /** 把聚焦宿主移动到聚焦项所在分组的后面。
+   *  宿主只被「移动」，从不被 innerHTML 重建 —— 图表实例因此永远活着。
+   *  （旧版把宿主 innerHTML 清空，实例注册表里却还留着已死的图表，
+   *   于是第二次聚焦起 K 线集体消失 —— 就是你看到的「聚焦里没 K 线」。） */
+  function positionFocusHost () {
+    const host = $('wfocusHost');
+    if (!host) return;
+    if (!S.focus) { host.hidden = true; return; }
+    const it = worldFlat()[S.focus];
+    const grp = it ? document.getElementById('grp-' + it.group) : null;
+    if (grp && grp.nextElementSibling !== host) grp.insertAdjacentElement('afterend', host);
+    if (host.hidden) {
+      host.hidden = false;
+      // 从 display:none 里出来的一帧内尺寸才就绪；下一帧再让图表对齐宽度
+      requestAnimationFrame(() => Charts.resize());
+    }
+  }
+
+  /** 60 秒轮询只补聚焦头部的现价，不重建图表实例 */
+  function updateFocusValues () {
     const it = worldFlat()[S.focus];
     if (!it) return;
     const set = (sel, txt, base) => {
-      const n = document.querySelector('#inspector ' + sel);
+      const n = document.querySelector('#wfocusHost ' + sel);
       if (n) { n.textContent = txt; n.className = base + ' ' + chgCls(it); }
     };
     set('[data-f-v2]', valText(it), 'vv num');
@@ -324,26 +346,24 @@
     set('[data-f-t2]', footText(it), 'dim2 fnote');
   }
 
-  function showInspector () { $('inspector').hidden = false; }
-  function hideInspector () { $('inspector').hidden = true; }
-
-  /* ---- 聚焦的开关与取数（图表宿主 = 右栏吸顶 Inspector） ---- */
+  /* ---- 聚焦的开关与取数（图表宿主 = 全球市场卡内的稳定面板） ---- */
 
   function focusWorld (id) {
     if (S.focus === id) { unfocusWorld(); return; }
     S.focus = id;
+    const it = worldFlat()[id];
+    // 所在分组若被折叠，先展开 —— 图表要出现在它的上下文里
+    if (it && it.group) S.open[it.group] = true;
     paintWorld();
-    showInspector();
-    $('wfocusHead').innerHTML = focusHeadHTML(worldFlat()[id]);
-    $('wfocusChart').innerHTML = '';          // 清掉上一张旧图占位
+    $('wfocusHead').innerHTML = it ? focusHeadHTML(it) : '';
     $('wfocusOhlc').innerHTML = '';
     $('wfocusMeta').innerHTML = '—';
     $('wfocusState').textContent = '正在取历史序列…';
     writeHash('w=' + id);
-    // 桌面右栏吸顶，聚焦图已在视野内无需滚动；手机 Inspector 回组内，要滚过去
-    if (matchMedia('(max-width: 780px)').matches) {
-      const ic = $('inspector');
-      if (ic && ic.scrollIntoView) ic.scrollIntoView({ block: 'start', behavior: 'smooth' });
+    // 图表就地出现在瓦片下方；万一在视口外，最小幅度滚进来
+    const host = $('wfocusHost');
+    if (host && host.scrollIntoView) {
+      requestAnimationFrame(() => host.scrollIntoView({ block: 'nearest', behavior: 'smooth' }));
     }
     loadFocusSeries(id);
   }
@@ -351,7 +371,6 @@
   function unfocusWorld () {
     S.focus = null;
     paintWorld();
-    hideInspector();
     writeHash('');
   }
 
@@ -377,10 +396,14 @@
     if (S.focus !== id) return;
 
     if (s.kind === 'bars') {
-      Charts.draw(host, s.bars, {
-        tail: FOCUS_DAYS, mas: [5, 10], masColors: [Charts.GOLD, '#64d2ff'],
-        key: 'wf|' + id,
-        readout: $('wfocusOhlc'), digits: it.digits, fontSize: 11, barSpacing: 5
+      // 下一帧再画：宿主刚从隐藏态出现时，这一帧内布局尺寸才就绪
+      requestAnimationFrame(() => {
+        if (S.focus !== id) return;
+        Charts.draw(host, s.bars, {
+          tail: FOCUS_DAYS, mas: [5, 10], masColors: [Charts.ACCENT, Charts.GREY],
+          key: 'wf|' + id,
+          readout: $('wfocusOhlc'), digits: it.digits, fontSize: 11, barSpacing: 5
+        });
       });
       const st = Charts.stats(s.bars.slice(-FOCUS_DAYS));
       meta.innerHTML = st
@@ -391,14 +414,17 @@
           fmtPct(st.pct, 2) + '</b>' + ' · 源 <b>' + esc(s.src) + '</b>'
         : '';
       state.innerHTML = '上图 <b>' + (it.label) + '</b> 日线 · 红涨绿跌 · ' +
-        '均线 MA5（金）/ MA10（青）· 双击图表复位缩放 · 收起看右栏顶部按钮';
+        '均线 MA5（蓝）/ MA10（灰）· 双击图表复位缩放 · 点「收起」或再点一次瓦片收起';
     } else if (s.kind === 'line') {
-      // 仓单用中性蓝：红涨绿跌在仓单曲线上没有意义（仓单降 ≠ 看空），
+      // 仓单用中性青：红涨绿跌在仓单曲线上没有意义（仓单降 ≠ 看空），
       // 沿用涨跌色会让人把库存变化读成价格方向。
-      const lineColor = it.srcId === 'em_stock' ? '#0a84ff' : Charts.colorFor(it.pct);
-      Charts.drawLine(host, s.points, {
-        key: 'wf|' + id, readout: $('wfocusOhlc'), digits: it.digits,
-        unit: s.unit || it.suffix || '', color: lineColor, fontSize: 11
+      const lineColor = it.srcId === 'em_stock' ? '#009cbc' : Charts.colorFor(it.pct);
+      requestAnimationFrame(() => {
+        if (S.focus !== id) return;
+        Charts.drawLine(host, s.points, {
+          key: 'wf|' + id, readout: $('wfocusOhlc'), digits: it.digits,
+          unit: s.unit || it.suffix || '', color: lineColor, fontSize: 11
+        });
       });
       const pts = s.points;
       const first = pts[0][1], last = pts[pts.length - 1][1];
@@ -723,16 +749,12 @@
 
   function macroConfigured () { return !!(AI_PROXY && AI_PROXY.url); }
 
-  /** 启动时定一次宏观卡形态：已配置→触发压缩；未配置→灰底提示但不调任何 API */
+  /** 启动时定一次宏观卡形态：已配置→触发压缩；未配置→整卡保持隐藏（零噪音零请求） */
   function initMacro () {
     const card = $('macroCard');
     if (!card) return;
     if (macroConfigured()) { runMacro(); return; }
-    card.hidden = false;
-    $('macroNote').textContent = '未启用';
-    $('macroBody').innerHTML = '<p class="state-dashed">宏观速览未启用：在 ' +
-      'assets/config.js 配置 <b>AI_PROXY</b>（Cloudflare Worker → DeepSeek）后自动开启。' +
-      '未配置时零请求、零花费。</p>';
+    card.hidden = true;
   }
 
   function showMacro (msgHtml, noteText) {
@@ -1164,9 +1186,9 @@
       if (!t) return;
       focusWorld(t.dataset.wid);
     });
-    // 右栏 Inspector 的「收起」按钮
-    const icClose = $('inspClose');
-    if (icClose) icClose.addEventListener('click', () => unfocusWorld());
+    // 聚焦面板的「收起」按钮（宿主在 #world 外面，单独绑定）
+    const wfClose = $('wfocusClose');
+    if (wfClose) wfClose.addEventListener('click', () => unfocusWorld());
     // Esc 退出聚焦（终端开着的时候不抢）
     document.addEventListener('keydown', e => {
       if (e.key === 'Escape' && S.focus && $('terminal').hidden) unfocusWorld();

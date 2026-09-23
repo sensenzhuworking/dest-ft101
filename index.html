@@ -10,7 +10,7 @@
 <meta property="og:title" content="聚酯链驾驶舱">
 <meta property="og:description" content="原油到瓶片/短纤：K线、加工费、数据血统、全球宏观与情报流">
 <meta property="og:type" content="website">
-<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230b0c0f'/%3E%3Crect x='10' y='8' width='4' height='12' fill='%23ff453a'/%3E%3Crect x='18' y='12' width='4' height='12' fill='%2330d158'/%3E%3Crect x='4' y='22' width='24' height='2' rx='1' fill='%230a84ff'/%3E%3C/svg%3E">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230e1116'/%3E%3Crect x='10' y='8' width='4' height='12' fill='%23f0554e'/%3E%3Crect x='18' y='12' width='4' height='12' fill='%2327c08a'/%3E%3Crect x='4' y='22' width='24' height='2' rx='1' fill='%230091d4'/%3E%3C/svg%3E">
 <link rel="preconnect" href="https://stock2.finance.sina.com.cn" crossorigin>
 <link rel="preconnect" href="https://qt.gtimg.cn" crossorigin>
 <link rel="preconnect" href="https://quote.cnbc.com" crossorigin>
@@ -63,8 +63,8 @@
       </div>
 
       <div class="legend">
-        <span><i style="background:#5a8fd6" aria-hidden="true"></i>MA5</span>
-        <span><i style="background:#98989d" aria-hidden="true"></i>MA20</span>
+        <span><i style="background:#0091d4" aria-hidden="true"></i>MA5</span>
+        <span><i style="background:#9d9d9d" aria-hidden="true"></i>MA20</span>
         <span>涨 <span class="up">红</span> · 跌 <span class="down">绿</span></span>
         <span>双击复位</span>
         <span class="spacer" id="klineRange"></span>
@@ -96,25 +96,18 @@
     <section class="card" aria-labelledby="h-world">
       <div class="card-h">
         <h2 id="h-world">全球市场</h2>
-        <span class="note">点瓦片聚焦 · 点标题展开/收起</span>
+        <span class="note">点瓦片就地放大 K 线 · 点组标题展开/收起</span>
         <span class="note spacer" id="worldNote">正在取数…</span>
       </div>
       <div id="world"></div>
-    </section>
-  </div>
-
-  <!-- ======================= 右栏 ======================= -->
-  <aside class="col-side">
-
-    <!-- 吸顶固定 Inspector：点任意全球市场瓦片，图表固定在右栏顶部持续更新，不滚动 -->
-    <section class="card inspector-card" id="inspector" hidden aria-labelledby="h-inspector">
-      <div class="card-h">
-        <h2 id="h-inspector">聚焦</h2>
-        <button class="btn spacer" id="inspClose" type="button" data-wclose="1" title="收起放大面板">收起</button>
-      </div>
-      <div class="wfocus">
+      <!-- 聚焦面板：稳定宿主，永远不被 #world 的重绘拆掉。
+           点瓦片后整块移动到对应分组的后面（移动节点不销毁图表实例）。 -->
+      <div class="wfocus" id="wfocusHost" hidden>
         <div class="wfocus-main">
-          <div class="wfocus-h" id="wfocusHead"></div>
+          <div class="wfocus-h">
+            <span id="wfocusHead"></span>
+            <button class="btn spacer" id="wfocusClose" type="button" data-wclose="1" title="收起放大面板">收起</button>
+          </div>
           <div class="wfocus-chart">
             <div class="ohlc" id="wfocusOhlc" aria-hidden="true"></div>
             <div class="wchart" id="wfocusChart" role="img"></div>
@@ -124,8 +117,12 @@
         </div>
       </div>
     </section>
+  </div>
 
-    <!-- 宏观速览：把已抓情报流里宏观/政策/产业类新信息，用 AI 压缩成几条要点 -->
+  <!-- ======================= 右栏 ======================= -->
+  <aside class="col-side">
+
+    <!-- 宏观速览：只在 config.js 配好 AI_PROXY 后才出现；未配置时保持隐藏零噪音 -->
     <section class="card macro-card" id="macroCard" hidden aria-labelledby="h-macro">
       <div class="card-h">
         <h2 id="h-macro">宏观速览</h2>
